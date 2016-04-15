@@ -1,33 +1,40 @@
-# You Don't Know JS: Scope & Closures
+# You Don't Know JS: *this* & Object Prototypes
 
 ## Table of Contents
 
 * Foreword
 * Preface
-* Chapter 1: What is Scope?
-	* Compiler Theory
-	* Understanding Scope
-	* Nested Scope
-	* Errors
-* Chapter 2: Lexical Scope
-	* Lex-time
-	* Cheating Lexical
-* Chapter 3: Function vs. Block Scope
-	* Scope From Functions
-	* Hiding In Plain Scope
-	* Functions As Scopes
-	* Blocks As Scopes
-* Chapter 4: Hoisting
-	* Chicken Or The Egg?
-	* The Compiler Strikes Again
-	* Functions First
-* Chapter 5: Scope Closures
-	* Enlightenment
-	* Nitty Gritty
-	* Now I Can See
-	* Loops + Closure
-	* Modules
-* Appendix A: Dynamic Scope
-* Appendix B: Polyfilling Block Scope
-* Appendix C: Lexical-this
-* Appendix D: Acknowledgments
+* Chapter 1: `this` Or That?
+	* Why `this`?
+	* Confusions
+	* What's `this`?
+* Chapter 2: `this` All Makes Sense Now!
+	* Call-site
+	* Nothing But Rules
+	* Everything In Order
+	* Binding Exceptions
+	* Lexical `this`
+* Chapter 3: Objects
+	* Syntax
+	* Type
+	* Contents
+	* Iteration
+* Chapter 4: Mixing (Up) "Class" Objects
+	* Class Theory
+	* Class Mechanics
+	* Class Inheritance
+	* Mixins
+* Chapter 5: Prototypes
+	* `[[Prototype]]`
+	* "Class"
+	* "(Prototypal) Inheritance"
+	* Object Links
+* Chapter 6: Behavior Delegation
+	* Towards Delegation-Oriented Design
+	* Classes vs. Objects
+	* Simpler Design
+	* Nicer Syntax
+	* Introspection
+* Appendix A: ES6 `class`
+* Appendix B: Acknowledgments
+

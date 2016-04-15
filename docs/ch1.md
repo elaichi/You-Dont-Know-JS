@@ -1,310 +1,281 @@
-# You Don't Know JS: Scope & Closures
-# Chapter 1: What is Scope?
+# You Don't Know JS: *this* & Object Prototypes
+# Chapter 1: `this` Or That?
 
-One of the most fundamental paradigms of nearly all programming languages is the ability to store values in variables, and later retrieve or modify those values. In fact, the ability to store values and pull values out of variables is what gives a program *state*.
+One of the most confused mechanisms in JavaScript is the `this` keyword. It's a special identifier keyword that's automatically defined in the scope of every function, but what exactly it refers to bedevils even seasoned JavaScript developers.
 
-Without such a concept, a program could perform some tasks, but they would be extremely limited and not terribly interesting.
+> Any sufficiently *advanced* technology is indistinguishable from magic. -- Arthur C. Clarke
 
-But the inclusion of variables into our program begets the most interesting questions we will now address: where do those variables *live*? In other words, where are they stored? And, most importantly, how does our program find them when it needs them?
+JavaScript's `this` mechanism isn't actually *that* advanced, but developers often paraphrase that quote in their own mind by inserting "complex" or "confusing", and there's no question that without lack of clear understanding, `this` can seem downright magical in *your* confusion.
 
-These questions speak to the need for a well-defined set of rules for storing variables in some location, and for finding those variables at a later time. We'll call that set of rules: *Scope*.
+**Note:** The word "this" is a terribly common pronoun in general discourse. So, it can be very difficult, especially verbally, to determine whether we are using "this" as a pronoun or using it to refer to the actual keyword identifier. For clarity, I will always use `this` to refer to the special keyword, and "this" or *this* or this otherwise.
 
-But, where and how do these *Scope* rules get set?
+## Why `this`?
 
-## Compiler Theory
+If the `this` mechanism is so confusing, even to seasoned JavaScript developers, one may wonder why it's even useful? Is it more trouble than it's worth? Before we jump into the *how*, we should examine the *why*.
 
-It may be self-evident, or it may be surprising, depending on your level of interaction with various languages, but despite the fact that JavaScript falls under the general category of "dynamic" or "interpreted" languages, it is in fact a compiled language. It is *not* compiled well in advance, as are many traditionally-compiled languages, nor are the results of compilation portable among various distributed systems.
-
-But, nevertheless, the JavaScript engine performs many of the same steps, albeit in more sophisticated ways than we may commonly be aware, of any traditional language-compiler.
-
-In traditional compiled-language process, a chunk of source code, your program, will undergo typically three steps *before* it is executed, roughly called "compilation":
-
-1. **Tokenizing/Lexing:** breaking up a string of characters into meaningful (to the language) chunks, called tokens. For instance, consider the program: `var a = 2;`. This program would likely be broken up into the following tokens: `var`, `a`, `=`, `2`, and `;`. Whitespace may or may not be persisted as a token, depending on whether it's meaningful or not.
-
-    **Note:** The difference between tokenizing and lexing is subtle and academic, but it centers on whether or not these tokens are identified in a *stateless* or *stateful* way. Put simply, if the tokenizer were to invoke stateful parsing rules to figure out whether `a` should be considered a distinct token or just part of another token, *that* would be **lexing**.
-
-2. **Parsing:** taking a stream (array) of tokens and turning it into a tree of nested elements, which collectively represent the grammatical structure of the program. This tree is called an "AST" (<b>A</b>bstract <b>S</b>yntax <b>T</b>ree).
-
-    The tree for `var a = 2;` might start with a top-level node called `VariableDeclaration`, with a child node called `Identifier` (whose value is `a`), and another child called `AssignmentExpression` which itself has a child called `NumericLiteral` (whose value is `2`).
-
-3. **Code-Generation:** the process of taking an AST and turning it into executable code. This part varies greatly depending on the language, the platform it's targeting, etc.
-
-    So, rather than get mired in details, we'll just handwave and say that there's a way to take our above described AST for `var a = 2;` and turn it into a set of machine instructions to actually *create* a variable called `a` (including reserving memory, etc.), and then store a value into `a`.
-
-    **Note:** The details of how the engine manages system resources are deeper than we will dig, so we'll just take it for granted that the engine is able to create and store variables as needed.
-
-The JavaScript engine is vastly more complex than *just* those three steps, as are most other language compilers. For instance, in the process of parsing and code-generation, there are certainly steps to optimize the performance of the execution, including collapsing redundant elements, etc.
-
-So, I'm painting only with broad strokes here. But I think you'll see shortly why *these* details we *do* cover, even at a high level, are relevant.
-
-For one thing, JavaScript engines don't get the luxury (like other language compilers) of having plenty of time to optimize, because JavaScript compilation doesn't happen in a build step ahead of time, as with other languages.
-
-For JavaScript, the compilation that occurs happens, in many cases, mere microseconds (or less!) before the code is executed. To ensure the fastest performance, JS engines use all kinds of tricks (like JITs, which lazy compile and even hot re-compile, etc.) which are well beyond the "scope" of our discussion here.
-
-Let's just say, for simplicity's sake, that any snippet of JavaScript has to be compiled before (usually *right* before!) it's executed. So, the JS compiler will take the program `var a = 2;` and compile it *first*, and then be ready to execute it, usually right away.
-
-## Understanding Scope
-
-The way we will approach learning about scope is to think of the process in terms of a conversation. But, *who* is having the conversation?
-
-### The Cast
-
-Let's meet the cast of characters that interact to process the program `var a = 2;`, so we understand their conversations that we'll listen in on shortly:
-
-1. *Engine*: responsible for start-to-finish compilation and execution of our JavaScript program.
-
-2. *Compiler*: one of *Engine*'s friends; handles all the dirty work of parsing and code-generation (see previous section).
-
-3. *Scope*: another friend of *Engine*; collects and maintains a look-up list of all the declared identifiers (variables), and enforces a strict set of rules as to how these are accessible to currently executing code.
-
-For you to *fully understand* how JavaScript works, you need to begin to *think* like *Engine* (and friends) think, ask the questions they ask, and answer those questions the same.
-
-### Back & Forth
-
-When you see the program `var a = 2;`, you most likely think of that as one statement. But that's not how our new friend *Engine* sees it. In fact, *Engine* sees two distinct statements, one which *Compiler* will handle during compilation, and one which *Engine* will handle during execution.
-
-So, let's break down how *Engine* and friends will approach the program `var a = 2;`.
-
-The first thing *Compiler* will do with this program is perform lexing to break it down into tokens, which it will then parse into a tree. But when *Compiler* gets to code-generation, it will treat this program somewhat differently than perhaps assumed.
-
-A reasonable assumption would be that *Compiler* will produce code that could be summed up by this pseudo-code: "Allocate memory for a variable, label it `a`, then stick the value `2` into that variable." Unfortunately, that's not quite accurate.
-
-*Compiler* will instead proceed as:
-
-1. Encountering `var a`, *Compiler* asks *Scope* to see if a variable `a` already exists for that particular scope collection. If so, *Compiler* ignores this declaration and moves on. Otherwise, *Compiler* asks *Scope* to declare a new variable called `a` for that scope collection.
-
-2. *Compiler* then produces code for *Engine* to later execute, to handle the `a = 2` assignment. The code *Engine* runs will first ask *Scope* if there is a variable called `a` accessible in the current scope collection. If so, *Engine* uses that variable. If not, *Engine* looks *elsewhere* (see nested *Scope* section below).
-
-If *Engine* eventually finds a variable, it assigns the value `2` to it. If not, *Engine* will raise its hand and yell out an error!
-
-To summarize: two distinct actions are taken for a variable assignment: First, *Compiler* declares a variable (if not previously declared in the current scope), and second, when executing, *Engine* looks up the variable in *Scope* and assigns to it, if found.
-
-### Compiler Speak
-
-We need a little bit more compiler terminology to proceed further with understanding.
-
-When *Engine* executes the code that *Compiler* produced for step (2), it has to look-up the variable `a` to see if it has been declared, and this look-up is consulting *Scope*. But the type of look-up *Engine* performs affects the outcome of the look-up.
-
-In our case, it is said that *Engine* would be performing an "LHS" look-up for the variable `a`. The other type of look-up is called "RHS".
-
-I bet you can guess what the "L" and "R" mean. These terms stand for "Left-hand Side" and "Right-hand Side".
-
-Side... of what? **Of an assignment operation.**
-
-In other words, an LHS look-up is done when a variable appears on the left-hand side of an assignment operation, and an RHS look-up is done when a variable appears on the right-hand side of an assignment operation.
-
-Actually, let's be a little more precise. An RHS look-up is indistinguishable, for our purposes, from simply a look-up of the value of some variable, whereas the LHS look-up is trying to find the variable container itself, so that it can assign. In this way, RHS doesn't *really* mean "right-hand side of an assignment" per se, it just, more accurately, means "not left-hand side".
-
-Being slightly glib for a moment, you could also think "RHS" instead means "retrieve his/her source (value)", implying that RHS means "go get the value of...".
-
-Let's dig into that deeper.
-
-When I say:
+Let's try to illustrate the motivation and utility of `this`:
 
 ```js
-console.log( a );
-```
-
-The reference to `a` is an RHS reference, because nothing is being assigned to `a` here. Instead, we're looking-up to retrieve the value of `a`, so that the value can be passed to `console.log(..)`.
-
-By contrast:
-
-```js
-a = 2;
-```
-
-The reference to `a` here is an LHS reference, because we don't actually care what the current value is, we simply want to find the variable as a target for the `= 2` assignment operation.
-
-**Note:** LHS and RHS meaning "left/right-hand side of an assignment" doesn't necessarily literally mean "left/right side of the `=` assignment operator". There are several other ways that assignments happen, and so it's better to conceptually think about it as: "who's the target of the assignment (LHS)" and "who's the source of the assignment (RHS)".
-
-Consider this program, which has both LHS and RHS references:
-
-```js
-function foo(a) {
-	console.log( a ); // 2
+function identify() {
+	return this.name.toUpperCase();
 }
 
-foo( 2 );
-```
-
-The last line that invokes `foo(..)` as a function call requires an RHS reference to `foo`, meaning, "go look-up the value of `foo`, and give it to me." Moreover, `(..)` means the value of `foo` should be executed, so it'd better actually be a function!
-
-There's a subtle but important assignment here. **Did you spot it?**
-
-You may have missed the implied `a = 2` in this code snippet. It happens when the value `2` is passed as an argument to the `foo(..)` function, in which case the `2` value is **assigned** to the parameter `a`. To (implicitly) assign to parameter `a`, an LHS look-up is performed.
-
-There's also an RHS reference for the value of `a`, and that resulting value is passed to `console.log(..)`. `console.log(..)` needs a reference to execute. It's an RHS look-up for the `console` object, then a property-resolution occurs to see if it has a method called `log`.
-
-Finally, we can conceptualize that there's an LHS/RHS exchange of passing the value `2` (by way of variable `a`'s RHS look-up) into `log(..)`. Inside of the native implementation of `log(..)`, we can assume it has parameters, the first of which (perhaps called `arg1`) has an LHS reference look-up, before assigning `2` to it.
-
-**Note:** You might be tempted to conceptualize the function declaration `function foo(a) {...` as a normal variable declaration and assignment, such as `var foo` and `foo = function(a){...`. In so doing, it would be tempting to think of this function declaration as involving an LHS look-up.
-
-However, the subtle but important difference is that *Compiler* handles both the declaration and the value definition during code-generation, such that when *Engine* is executing code, there's no processing necessary to "assign" a function value to `foo`. Thus, it's not really appropriate to think of a function declaration as an LHS look-up assignment in the way we're discussing them here.
-
-### Engine/Scope Conversation
-
-```js
-function foo(a) {
-	console.log( a ); // 2
+function speak() {
+	var greeting = "Hello, I'm " + identify.call( this );
+	console.log( greeting );
 }
 
-foo( 2 );
+var me = {
+	name: "Kyle"
+};
+
+var you = {
+	name: "Reader"
+};
+
+identify.call( me ); // KYLE
+identify.call( you ); // READER
+
+speak.call( me ); // Hello, I'm KYLE
+speak.call( you ); // Hello, I'm READER
 ```
 
-Let's imagine the above exchange (which processes this code snippet) as a conversation. The conversation would go a little something like this:
+If the *how* of this snippet confuses you, don't worry! We'll get to that shortly. Just set those questions aside briefly so we can look into the *why* more clearly.
 
-> ***Engine***: Hey *Scope*, I have an RHS reference for `foo`. Ever heard of it?
+This code snippet allows the `identify()` and `speak()` functions to be re-used against multiple *context* (`me` and `you`) objects, rather than needing a separate version of the function for each object.
 
-> ***Scope***: Why yes, I have. *Compiler* declared it just a second ago. He's a function. Here you go.
-
-> ***Engine***: Great, thanks! OK, I'm executing `foo`.
-
-> ***Engine***: Hey, *Scope*, I've got an LHS reference for `a`, ever heard of it?
-
-> ***Scope***: Why yes, I have. *Compiler* declared it as a formal parameter to `foo` just recently. Here you go.
-
-> ***Engine***: Helpful as always, *Scope*. Thanks again. Now, time to assign `2` to `a`.
-
-> ***Engine***: Hey, *Scope*, sorry to bother you again. I need an RHS look-up for `console`. Ever heard of it?
-
-> ***Scope***: No problem, *Engine*, this is what I do all day. Yes, I've got `console`. He's built-in. Here ya go.
-
-> ***Engine***: Perfect. Looking up `log(..)`. OK, great, it's a function.
-
-> ***Engine***: Yo, *Scope*. Can you help me out with an RHS reference to `a`. I think I remember it, but just want to double-check.
-
-> ***Scope***: You're right, *Engine*. Same guy, hasn't changed. Here ya go.
-
-> ***Engine***: Cool. Passing the value of `a`, which is `2`, into `log(..)`.
-
-> ...
-
-### Quiz
-
-Check your understanding so far. Make sure to play the part of *Engine* and have a "conversation" with the *Scope*:
+Instead of relying on `this`, you could have explicitly passed in a context object to both `identify()` and `speak()`.
 
 ```js
-function foo(a) {
-	var b = a;
-	return a + b;
+function identify(context) {
+	return context.name.toUpperCase();
 }
 
-var c = foo( 2 );
+function speak(context) {
+	var greeting = "Hello, I'm " + identify( context );
+	console.log( greeting );
+}
+
+identify( you ); // READER
+speak( me ); // Hello, I'm KYLE
 ```
 
-1. Identify all the LHS look-ups (there are 3!).
+However, the `this` mechanism provides a more elegant way of implicitly "passing along" an object reference, leading to cleaner API design and easier re-use.
 
-2. Identify all the RHS look-ups (there are 4!).
+The more complex your usage pattern is, the more clearly you'll see that passing context around as an explicit parameter is often messier than passing around a `this` context. When we explore objects and prototypes, you will see the helpfulness of a collection of functions being able to automatically reference the proper context object.
 
-**Note:** See the chapter review for the quiz answers!
+## Confusions
 
-## Nested Scope
+We'll soon begin to explain how `this` *actually* works, but first we must  dispel some misconceptions about how it *doesn't* actually work.
 
-We said that *Scope* is a set of rules for looking up variables by their identifier name. There's usually more than one *Scope* to consider, however.
+The name "this" creates confusion when developers try to think about it too literally. There are two meanings often assumed, but both are incorrect.
 
-Just as a block or function is nested inside another block or function, scopes are nested inside other scopes. So, if a variable cannot be found in the immediate scope, *Engine* consults the next outer containing scope, continuing until found or until the outermost (aka, global) scope has been reached.
+### Itself
 
-Consider:
+The first common temptation is to assume `this` refers to the function itself. That's a reasonable grammatical inference, at least.
+
+Why would you want to refer to a function from inside itself? The most common reasons would be things like recursion (calling a function from inside itself) or having an event handler that can unbind itself when it's first called.
+
+Developers new to JS's mechanisms often think that referencing the function as an object (all functions in JavaScript are objects!) lets you store *state* (values in properties) between function calls. While this is certainly possible and has some limited uses, the rest of the book will expound on many other patterns for *better* places to store state besides the function object.
+
+But for just a moment, we'll explore that pattern, to illustrate how `this` doesn't let a function get a reference to itself like we might have assumed.
+
+Consider the following code, where we attempt to track how many times a function (`foo`) was called:
 
 ```js
-function foo(a) {
-	console.log( a + b );
+function foo(num) {
+	console.log( "foo: " + num );
+
+	// keep track of how many times `foo` is called
+	this.count++;
 }
 
-var b = 2;
+foo.count = 0;
 
-foo( 2 ); // 4
+var i;
+
+for (i=0; i<10; i++) {
+	if (i > 5) {
+		foo( i );
+	}
+}
+// foo: 6
+// foo: 7
+// foo: 8
+// foo: 9
+
+// how many times was `foo` called?
+console.log( foo.count ); // 0 -- WTF?
 ```
 
-The RHS reference for `b` cannot be resolved inside the function `foo`, but it can be resolved in the *Scope* surrounding it (in this case, the global).
+`foo.count` is *still* `0`, even though the four `console.log` statements clearly indicate `foo(..)` was in fact called four times. The frustration stems from a *too literal* interpretation of what `this` (in `this.count++`) means.
 
-So, revisiting the conversations between *Engine* and *Scope*, we'd overhear:
+When the code executes `foo.count = 0`, indeed it's adding a property `count` to the function object `foo`. But for the `this.count` reference inside of the function, `this` is not in fact pointing *at all* to that function object, and so even though the property names are the same, the root objects are different, and confusion ensues.
 
-> ***Engine***: "Hey, *Scope* of `foo`, ever heard of `b`? Got an RHS reference for it."
+**Note:** A responsible developer *should* ask at this point, "If I was incrementing a `count` property but it wasn't the one I expected, which `count` *was* I incrementing?" In fact, were she to dig deeper, she would find that she had accidentally created a global variable `count` (see Chapter 2 for *how* that happened!), and it currently has the value `NaN`. Of course, once she identifies this peculiar outcome, she then has a whole other set of questions: "How was it global, and why did it end up `NaN` instead of some proper count value?" (see Chapter 2).
 
-> ***Scope***: "Nope, never heard of it. Go fish."
-
-> ***Engine***: "Hey, *Scope* outside of `foo`, oh you're the global *Scope*, ok cool. Ever heard of `b`? Got an RHS reference for it."
-
-> ***Scope***: "Yep, sure have. Here ya go."
-
-The simple rules for traversing nested *Scope*: *Engine* starts at the currently executing *Scope*, looks for the variable there, then if not found, keeps going up one level, and so on. If the outermost global scope is reached, the search stops, whether it finds the variable or not.
-
-### Building on Metaphors
-
-To visualize the process of nested *Scope* resolution, I want you to think of this tall building.
-
-<img src="fig1.png" width="250">
-
-The building represents our program's nested *Scope* rule set. The first floor of the building represents your currently executing *Scope*, wherever you are. The top level of the building is the global *Scope*.
-
-You resolve LHS and RHS references by looking on your current floor, and if you don't find it, taking the elevator to the next floor, looking there, then the next, and so on. Once you get to the top floor (the global *Scope*), you either find what you're looking for, or you don't. But you have to stop regardless.
-
-## Errors
-
-Why does it matter whether we call it LHS or RHS?
-
-Because these two types of look-ups behave differently in the circumstance where the variable has not yet been declared (is not found in any consulted *Scope*).
-
-Consider:
+Instead of stopping at this point and digging into why the `this` reference doesn't seem to be behaving as *expected*, and answering those tough but important questions, many developers simply avoid the issue altogether, and hack toward some other solution, such as creating another object to hold the `count` property:
 
 ```js
-function foo(a) {
-	console.log( a + b );
-	b = a;
+function foo(num) {
+	console.log( "foo: " + num );
+
+	// keep track of how many times `foo` is called
+	data.count++;
 }
 
-foo( 2 );
+var data = {
+	count: 0
+};
+
+var i;
+
+for (i=0; i<10; i++) {
+	if (i > 5) {
+		foo( i );
+	}
+}
+// foo: 6
+// foo: 7
+// foo: 8
+// foo: 9
+
+// how many times was `foo` called?
+console.log( data.count ); // 4
 ```
 
-When the RHS look-up occurs for `b` the first time, it will not be found. This is said to be an "undeclared" variable, because it is not found in the scope.
+While it is true that this approach "solves" the problem, unfortunately it simply ignores the real problem -- lack of understanding what `this` means and how it works -- and instead falls back to the comfort zone of a more familiar mechanism: lexical scope.
 
-If an RHS look-up fails to ever find a variable, anywhere in the nested *Scope*s, this results in a `ReferenceError` being thrown by the *Engine*. It's important to note that the error is of the type `ReferenceError`.
+**Note:** Lexical scope is a perfectly fine and useful mechanism; I am not belittling the use of it, by any means (see *"Scope & Closures"* title of this book series). But constantly *guessing* at how to use `this`, and usually being *wrong*, is not a good reason to retreat back to lexical scope and never learn *why* `this` eludes you.
 
-By contrast, if the *Engine* is performing an LHS look-up and arrives at the top floor (global *Scope*) without finding it, and if the program is not running in "Strict Mode" [^note-strictmode], then the global *Scope* will create a new variable of that name **in the global scope**, and hand it back to *Engine*.
+To reference a function object from inside itself, `this` by itself will typically be insufficient. You generally need a reference to the function object via a lexical identifier (variable) that points at it.
 
-*"No, there wasn't one before, but I was helpful and created one for you."*
+Consider these two functions:
 
-"Strict Mode" [^note-strictmode], which was added in ES5, has a number of different behaviors from normal/relaxed/lazy mode. One such behavior is that it disallows the automatic/implicit global variable creation. In that case, there would be no global *Scope*'d variable to hand back from an LHS look-up, and *Engine* would throw a `ReferenceError` similarly to the RHS case.
+```js
+function foo() {
+	foo.count = 4; // `foo` refers to itself
+}
 
-Now, if a variable is found for an RHS look-up, but you try to do something with its value that is impossible, such as trying to execute-as-function a non-function value, or reference a property on a `null` or `undefined` value, then *Engine* throws a different kind of error, called a `TypeError`.
+setTimeout( function(){
+	// anonymous function (no name), cannot
+	// refer to itself
+}, 10 );
+```
 
-`ReferenceError` is *Scope* resolution-failure related, whereas `TypeError` implies that *Scope* resolution was successful, but that there was an illegal/impossible action attempted against the result.
+In the first function, called a "named function", `foo` is a reference that can be used to refer to the function from inside itself.
+
+But in the second example, the function callback passed to `setTimeout(..)` has no name identifier (so called an "anonymous function"), so there's no proper way to refer to the function object itself.
+
+**Note:** The old-school but now deprecated and frowned-upon `arguments.callee` reference inside a function *also* points to the function object of the currently executing function. This reference is typically the only way to access an anonymous function's object from inside itself. The best approach, however, is to avoid the use of anonymous functions altogether, at least for those which require a self-reference, and instead use a named function (expression). `arguments.callee` is deprecated and should not be used.
+
+So another solution to our running example would have been to use the `foo` identifier as a function object reference in each place, and not use `this` at all, which *works*:
+
+```js
+function foo(num) {
+	console.log( "foo: " + num );
+
+	// keep track of how many times `foo` is called
+	foo.count++;
+}
+
+foo.count = 0;
+
+var i;
+
+for (i=0; i<10; i++) {
+	if (i > 5) {
+		foo( i );
+	}
+}
+// foo: 6
+// foo: 7
+// foo: 8
+// foo: 9
+
+// how many times was `foo` called?
+console.log( foo.count ); // 4
+```
+
+However, that approach similarly side-steps *actual* understanding of `this` and relies entirely on the lexical scoping of variable `foo`.
+
+Yet another way of approaching the issue is to force `this` to actually point at the `foo` function object:
+
+```js
+function foo(num) {
+	console.log( "foo: " + num );
+
+	// keep track of how many times `foo` is called
+	// Note: `this` IS actually `foo` now, based on
+	// how `foo` is called (see below)
+	this.count++;
+}
+
+foo.count = 0;
+
+var i;
+
+for (i=0; i<10; i++) {
+	if (i > 5) {
+		// using `call(..)`, we ensure the `this`
+		// points at the function object (`foo`) itself
+		foo.call( foo, i );
+	}
+}
+// foo: 6
+// foo: 7
+// foo: 8
+// foo: 9
+
+// how many times was `foo` called?
+console.log( foo.count ); // 4
+```
+
+**Instead of avoiding `this`, we embrace it.** We'll explain in a little bit *how* such techniques work much more completely, so don't worry if you're still a bit confused!
+
+### Its Scope
+
+The next most common misconception about the meaning of `this` is that it somehow refers to the function's scope. It's a tricky question, because in one sense there is some truth, but in the other sense, it's quite misguided.
+
+To be clear, `this` does not, in any way, refer to a function's **lexical scope**. It is true that internally, scope is kind of like an object with properties for each of the available identifiers. But the scope "object" is not accessible to JavaScript code. It's an inner part of the *Engine*'s implementation.
+
+Consider code which attempts (and fails!) to cross over the boundary and use `this` to implicitly refer to a function's lexical scope:
+
+```js
+function foo() {
+	var a = 2;
+	this.bar();
+}
+
+function bar() {
+	console.log( this.a );
+}
+
+foo(); //undefined
+```
+
+There's more than one mistake in this snippet. While it may seem contrived, the code you see is a distillation of actual real-world code that has been exchanged in public community help forums. It's a wonderful (if not sad) illustration of just how misguided `this` assumptions can be.
+
+Firstly, an attempt is made to reference the `bar()` function via `this.bar()`. It is almost certainly an *accident* that it works, but we'll explain the *how* of that shortly. The most natural way to have invoked `bar()` would have been to omit the leading `this.` and just make a lexical reference to the identifier.
+
+However, the developer who writes such code is attempting to use `this` to create a bridge between the lexical scopes of `foo()` and `bar()`, so that `bar()` has access to the variable `a` in the inner scope of `foo()`. **No such bridge is possible.** You cannot use a `this` reference to look something up in a lexical scope. It is not possible.
+
+Every time you feel yourself trying to mix lexical scope look-ups with `this`, remind yourself: *there is no bridge*.
+
+## What's `this`?
+
+Having set aside various incorrect assumptions, let us now turn our attention to how the `this` mechanism really works.
+
+We said earlier that `this` is not an author-time binding but a runtime binding. It is contextual based on the conditions of the function's invocation. `this` binding has nothing to do with where a function is declared, but has instead everything to do with the manner in which the function is called.
+
+When a function is invoked, an activation record, otherwise known as an execution context, is created. This record contains information about where the function was called from (the call-stack), *how* the function was invoked, what parameters were passed, etc. One of the properties of this record is the `this` reference which will be used for the duration of that function's execution.
+
+In the next chapter, we will learn to find a function's **call-site** to determine how its execution will bind `this`.
 
 ## Review (TL;DR)
 
-Scope is the set of rules that determines where and how a variable (identifier) can be looked-up. This look-up may be for the purposes of assigning to the variable, which is an LHS (left-hand-side) reference, or it may be for the purposes of retrieving its value, which is an RHS (right-hand-side) reference.
+`this` binding is a constant source of confusion for the JavaScript developer who does not take the time to learn how the mechanism actually works. Guesses, trial-and-error, and blind copy-n-paste from Stack Overflow answers is not an effective or proper way to leverage *this* important `this` mechanism.
 
-LHS references result from assignment operations. *Scope*-related assignments can occur either with the `=` operator or by passing arguments to (assign to) function parameters.
+To learn `this`, you first have to learn what `this` is *not*, despite any assumptions or misconceptions that may lead you down those paths. `this` is neither a reference to the function itself, nor is it a reference to the function's *lexical* scope.
 
-The JavaScript *Engine* first compiles code before it executes, and in so doing, it splits up statements like `var a = 2;` into two separate steps:
-
-1. First, `var a` to declare it in that *Scope*. This is performed at the beginning, before code execution.
-
-2. Later, `a = 2` to look up the variable (LHS reference) and assign to it if found.
-
-Both LHS and RHS reference look-ups start at the currently executing *Scope*, and if need be (that is, they don't find what they're looking for there), they work their way up the nested *Scope*, one scope (floor) at a time, looking for the identifier, until they get to the global (top floor) and stop, and either find it, or don't.
-
-Unfulfilled RHS references result in `ReferenceError`s being thrown. Unfulfilled LHS references result in an automatic, implicitly-created global of that name (if not in "Strict Mode" [^note-strictmode]), or a `ReferenceError` (if in "Strict Mode" [^note-strictmode]).
-
-### Quiz Answers
-
-```js
-function foo(a) {
-	var b = a;
-	return a + b;
-}
-
-var c = foo( 2 );
-```
-
-1. Identify all the LHS look-ups (there are 3!).
-
-	**`c = ..`, `a = 2` (implicit param assignment) and `b = ..`**
-
-2. Identify all the RHS look-ups (there are 4!).
-
-    **`foo(2..`, `= a;`, `a + ..` and `.. + b`**
-
-
-[^note-strictmode]: MDN: [Strict Mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions_and_function_scope/Strict_mode)
+`this` is actually a binding that is made when a function is invoked, and *what* it references is determined entirely by the call-site where the function is called.

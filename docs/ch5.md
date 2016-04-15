@@ -1,596 +1,752 @@
-# You Don't Know JS: Scope & Closures
-# Chapter 5: Scope Closure
+# You Don't Know JS: *this* & Object Prototypes
+# Chapter 5: Prototypes
 
-We arrive at this point with hopefully a very healthy, solid understanding of how scope works.
+In Chapters 3 and 4, we mentioned the `[[Prototype]]` chain several times, but haven't said what exactly it is. We will now examine prototypes in detail.
 
-We turn our attention to an incredibly important, but persistently elusive, *almost mythological*, part of the language: **closure**. If you have followed our discussion of lexical scope thus far, the payoff is that closure is going to be, largely, anti-climatic, almost self-obvious. *There's a man behind the wizard's curtain, and we're about to see him*. No, his name is not Crockford!
+**Note:** All of the attempts to emulate class-copy behavior, as described previously in Chapter 4, labeled as variations of "mixins", completely circumvent the `[[Prototype]]` chain mechanism we examine here in this chapter.
 
-If however you have nagging questions about lexical scope, now would be a good time to go back and review Chapter 2 before proceeding.
+## `[[Prototype]]`
 
-## Enlightenment
+Objects in JavaScript have an internal property, denoted in the specification as `[[Prototype]]`, which is simply a reference to another object. Almost all objects are given a non-`null` value for this property, at the time of their creation.
 
-For those who are somewhat experienced in JavaScript, but have perhaps never fully grasped the concept of closures, *understanding closure* can seem like a special nirvana that one must strive and sacrifice to attain.
-
-I recall years back when I had a firm grasp on JavaScript, but had no idea what closure was. The hint that there was *this other side* to the language, one which promised even more capability than I already possessed, teased and taunted me. I remember reading through the source code of early frameworks trying to understand how it actually worked. I remember the first time something of the "module pattern" began to emerge in my mind. I remember the *a-ha!* moments quite vividly.
-
-What I didn't know back then, what took me years to understand, and what I hope to impart to you presently, is this secret: **closure is all around you in JavaScript, you just have to recognize and embrace it.** Closures are not a special opt-in tool that you must learn new syntax and patterns for. No, closures are not even a weapon that you must learn to wield and master as Luke trained in The Force.
-
-Closures happen as a result of writing code that relies on lexical scope. They just happen. You do not even really have to intentionally create closures to take advantage of them. Closures are created and used for you all over your code. What you are *missing* is the proper mental context to recognize, embrace, and leverage closures for your own will.
-
-The enlightenment moment should be: **oh, closures are already occurring all over my code, I can finally *see* them now.** Understanding closures is like when Neo sees the Matrix for the first time.
-
-## Nitty Gritty
-
-OK, enough hyperbole and shameless movie references.
-
-Here's a down-n-dirty definition of what you need to know to understand and recognize closures:
-
-> Closure is when a function is able to remember and access its lexical scope even when that function is executing outside its lexical scope.
-
-Let's jump into some code to illustrate that definition.
-
-```js
-function foo() {
-	var a = 2;
-
-	function bar() {
-		console.log( a ); // 2
-	}
-
-	bar();
-}
-
-foo();
-```
-
-This code should look familiar from our discussions of Nested Scope. Function `bar()` has *access* to the variable `a` in the outer enclosing scope because of lexical scope look-up rules (in this case, it's an RHS reference look-up).
-
-Is this "closure"?
-
-Well, technically... *perhaps*. But by our what-you-need-to-know definition above... *not exactly*. I think the most accurate way to explain `bar()` referencing `a` is via lexical scope look-up rules, and those rules are *only* (an important!) **part** of what closure is.
-
-From a purely academic perspective, what is said of the above snippet is that the function `bar()` has a *closure* over the scope of `foo()` (and indeed, even over the rest of the scopes it has access to, such as the global scope in our case). Put slightly differently, it's said that `bar()` closes over the scope of `foo()`. Why? Because `bar()` appears nested inside of `foo()`. Plain and simple.
-
-But, closure defined in this way is not directly *observable*, nor do we see closure *exercised* in that snippet. We clearly see lexical scope, but closure remains sort of a mysterious shifting shadow behind the code.
-
-Let us then consider code which brings closure into full light:
-
-```js
-function foo() {
-	var a = 2;
-
-	function bar() {
-		console.log( a );
-	}
-
-	return bar;
-}
-
-var baz = foo();
-
-baz(); // 2 -- Whoa, closure was just observed, man.
-```
-
-The function `bar()` has lexical scope access to the inner scope of `foo()`. But then, we take `bar()`, the function itself, and pass it *as* a value. In this case, we `return` the function object itself that `bar` references.
-
-After we execute `foo()`, we assign the value it returned (our inner `bar()` function) to a variable called `baz`, and then we actually invoke `baz()`, which of course is invoking our inner function `bar()`, just by a different identifier reference.
-
-`bar()` is executed, for sure. But in this case, it's executed *outside* of its declared lexical scope.
-
-After `foo()` executed, normally we would expect that the entirety of the inner scope of `foo()` would go away, because we know that the *Engine* employs a *Garbage Collector* that comes along and frees up memory once it's no longer in use. Since it would appear that the contents of `foo()` are no longer in use, it would seem natural that they should be considered *gone*.
-
-But the "magic" of closures does not let this happen. That inner scope is in fact *still* "in use", and thus does not go away. Who's using it? **The function `bar()` itself**.
-
-By virtue of where it was declared, `bar()` has a lexical scope closure over that inner scope of `foo()`, which keeps that scope alive for `bar()` to reference at any later time.
-
-**`bar()` still has a reference to that scope, and that reference is called closure.**
-
-So, a few microseconds later, when the variable `baz` is invoked (invoking the inner function we initially labeled `bar`), it duly has *access* to author-time lexical scope, so it can access the variable `a` just as we'd expect.
-
-The function is being invoked well outside of its author-time lexical scope. **Closure** lets the function continue to access the lexical scope it was defined in at author-time.
-
-Of course, any of the various ways that functions can be *passed around* as values, and indeed invoked in other locations, are all examples of observing/exercising closure.
-
-```js
-function foo() {
-	var a = 2;
-
-	function baz() {
-		console.log( a ); // 2
-	}
-
-	bar( baz );
-}
-
-function bar(fn) {
-	fn(); // look ma, I saw closure!
-}
-```
-
-We pass the inner function `baz` over to `bar`, and call that inner function (labeled `fn` now), and when we do, its closure over the inner scope of `foo()` is observed, by accessing `a`.
-
-These passings-around of functions can be indirect, too.
-
-```js
-var fn;
-
-function foo() {
-	var a = 2;
-
-	function baz() {
-		console.log( a );
-	}
-
-	fn = baz; // assign `baz` to global variable
-}
-
-function bar() {
-	fn(); // look ma, I saw closure!
-}
-
-foo();
-
-bar(); // 2
-```
-
-Whatever facility we use to *transport* an inner function outside of its lexical scope, it will maintain a scope reference to where it was originally declared, and wherever we execute it, that closure will be exercised.
-
-## Now I Can See
-
-The previous code snippets are somewhat academic and artificially constructed to illustrate *using closure*. But I promised you something more than just a cool new toy. I promised that closure was something all around you in your existing code. Let us now *see* that truth.
-
-```js
-function wait(message) {
-
-	setTimeout( function timer(){
-		console.log( message );
-	}, 1000 );
-
-}
-
-wait( "Hello, closure!" );
-```
-
-We take an inner function (named `timer`) and pass it to `setTimeout(..)`. But `timer` has a scope closure over the scope of `wait(..)`, indeed keeping and using a reference to the variable `message`.
-
-A thousand milliseconds after we have executed `wait(..)`, and its inner scope should otherwise be long gone, that inner function `timer` still has closure over that scope.
-
-Deep down in the guts of the *Engine*, the built-in utility `setTimeout(..)` has reference to some parameter, probably called `fn` or `func` or something like that. *Engine* goes to invoke that function, which is invoking our inner `timer` function, and the lexical scope reference is still intact.
-
-**Closure.**
-
-Or, if you're of the jQuery persuasion (or any JS framework, for that matter):
-
-```js
-function setupBot(name,selector) {
-	$( selector ).click( function activator(){
-		console.log( "Activating: " + name );
-	} );
-}
-
-setupBot( "Closure Bot 1", "#bot_1" );
-setupBot( "Closure Bot 2", "#bot_2" );
-```
-
-I am not sure what kind of code you write, but I regularly write code which is responsible for controlling an entire global drone army of closure bots, so this is totally realistic!
-
-(Some) joking aside, essentially *whenever* and *wherever* you treat functions (which access their own respective lexical scopes) as first-class values and pass them around, you are likely to see those functions exercising closure. Be that timers, event handlers, Ajax requests, cross-window messaging, web workers, or any of the other asynchronous (or synchronous!) tasks, when you pass in a *callback function*, get ready to sling some closure around!
-
-**Note:** Chapter 3 introduced the IIFE pattern. While it is often said that IIFE (alone) is an example of observed closure, I would somewhat disagree, by our definition above.
-
-```js
-var a = 2;
-
-(function IIFE(){
-	console.log( a );
-})();
-```
-
-This code "works", but it's not strictly an observation of closure. Why? Because the function (which we named "IIFE" here) is not executed outside its lexical scope. It's still invoked right there in the same scope as it was declared (the enclosing/global scope that also holds `a`). `a` is found via normal lexical scope look-up, not really via closure.
-
-While closure might technically be happening at declaration time, it is *not* strictly observable, and so, as they say, *it's a tree falling in the forest with no one around to hear it.*
-
-Though an IIFE is not *itself* an example of closure, it absolutely creates scope, and it's one of the most common tools we use to create scope which can be closed over. So IIFEs are indeed heavily related to closure, even if not exercising closure themselves.
-
-Put this book down right now, dear reader. I have a task for you. Go open up some of your recent JavaScript code. Look for your functions-as-values and identify where you are already using closure and maybe didn't even know it before.
-
-I'll wait.
-
-Now... you see!
-
-## Loops + Closure
-
-The most common canonical example used to illustrate closure involves the humble for-loop.
-
-```js
-for (var i=1; i<=5; i++) {
-	setTimeout( function timer(){
-		console.log( i );
-	}, i*1000 );
-}
-```
-
-**Note:** Linters often complain when you put functions inside of loops, because the mistakes of not understanding closure are **so common among developers**. We explain how to do so properly here, leveraging the full power of closure. But that subtlety is often lost on linters and they will complain regardless, assuming you don't *actually* know what you're doing.
-
-The spirit of this code snippet is that we would normally *expect* for the behavior to be that the numbers "1", "2", .. "5" would be printed out, one at a time, one per second, respectively.
-
-In fact, if you run this code, you get "6" printed out 5 times, at the one-second intervals.
-
-**Huh?**
-
-Firstly, let's explain where `6` comes from. The terminating condition of the loop is when `i` is *not* `<=5`. The first time that's the case is when `i` is 6. So, the output is reflecting the final value of the `i` after the loop terminates.
-
-This actually seems obvious on second glance. The timeout function callbacks are all running well after the completion of the loop. In fact, as timers go, even if it was `setTimeout(.., 0)` on each iteration, all those function callbacks would still run strictly after the completion of the loop, and thus print `6` each time.
-
-But there's a deeper question at play here. What's *missing* from our code to actually have it behave as we semantically have implied?
-
-What's missing is that we are trying to *imply* that each iteration of the loop "captures" its own copy of `i`, at the time of the iteration. But, the way scope works, all 5 of those functions, though they are defined separately in each loop iteration, all **are closed over the same shared global scope**, which has, in fact, only one `i` in it.
-
-Put that way, *of course* all functions share a reference to the same `i`. Something about the loop structure tends to confuse us into thinking there's something else more sophisticated at work. There is not. There's no difference than if each of the 5 timeout callbacks were just declared one right after the other, with no loop at all.
-
-OK, so, back to our burning question. What's missing? We need more ~~cowbell~~ closured scope. Specifically, we need a new closured scope for each iteration of the loop.
-
-We learned in Chapter 3 that the IIFE creates scope by declaring a function and immediately executing it.
-
-Let's try:
-
-```js
-for (var i=1; i<=5; i++) {
-	(function(){
-		setTimeout( function timer(){
-			console.log( i );
-		}, i*1000 );
-	})();
-}
-```
-
-Does that work? Try it. Again, I'll wait.
-
-I'll end the suspense for you. **Nope.** But why? We now obviously have more lexical scope. Each timeout function callback is indeed closing over its own per-iteration scope created respectively by each IIFE.
-
-It's not enough to have a scope to close over **if that scope is empty**. Look closely. Our IIFE is just an empty do-nothing scope. It needs *something* in it to be useful to us.
-
-It needs its own variable, with a copy of the `i` value at each iteration.
-
-```js
-for (var i=1; i<=5; i++) {
-	(function(){
-		var j = i;
-		setTimeout( function timer(){
-			console.log( j );
-		}, j*1000 );
-	})();
-}
-```
-
-**Eureka! It works!**
-
-A slight variation some prefer is:
-
-```js
-for (var i=1; i<=5; i++) {
-	(function(j){
-		setTimeout( function timer(){
-			console.log( j );
-		}, j*1000 );
-	})( i );
-}
-```
-
-Of course, since these IIFEs are just functions, we can pass in `i`, and we can call it `j` if we prefer, or we can even call it `i` again. Either way, the code works now.
-
-The use of an IIFE inside each iteration created a new scope for each iteration, which gave our timeout function callbacks the opportunity to close over a new scope for each iteration, one which had a variable with the right per-iteration value in it for us to access.
-
-Problem solved!
-
-### Block Scoping Revisited
-
-Look carefully at our analysis of the previous solution. We used an IIFE to create new scope per-iteration. In other words, we actually *needed* a per-iteration **block scope**. Chapter 3 showed us the `let` declaration, which hijacks a block and declares a variable right there in the block.
-
-**It essentially turns a block into a scope that we can close over.** So, the following awesome code "just works":
-
-```js
-for (var i=1; i<=5; i++) {
-	let j = i; // yay, block-scope for closure!
-	setTimeout( function timer(){
-		console.log( j );
-	}, j*1000 );
-}
-```
-
-*But, that's not all!* (in my best Bob Barker voice). There's a special behavior defined for `let` declarations used in the head of a for-loop. This behavior says that the variable will be declared not just once for the loop, **but each iteration**. And, it will, helpfully, be initialized at each subsequent iteration with the value from the end of the previous iteration.
-
-```js
-for (let i=1; i<=5; i++) {
-	setTimeout( function timer(){
-		console.log( i );
-	}, i*1000 );
-}
-```
-
-How cool is that? Block scoping and closure working hand-in-hand, solving all the world's problems. I don't know about you, but that makes me a happy JavaScripter.
-
-## Modules
-
-There are other code patterns which leverage the power of closure but which do not on the surface appear to be about callbacks. Let's examine the most powerful of them: *the module*.
-
-```js
-function foo() {
-	var something = "cool";
-	var another = [1, 2, 3];
-
-	function doSomething() {
-		console.log( something );
-	}
-
-	function doAnother() {
-		console.log( another.join( " ! " ) );
-	}
-}
-```
-
-As this code stands right now, there's no observable closure going on. We simply have some private data variables `something` and `another`, and a couple of inner functions `doSomething()` and `doAnother()`, which both have lexical scope (and thus closure!) over the inner scope of `foo()`.
-
-But now consider:
-
-```js
-function CoolModule() {
-	var something = "cool";
-	var another = [1, 2, 3];
-
-	function doSomething() {
-		console.log( something );
-	}
-
-	function doAnother() {
-		console.log( another.join( " ! " ) );
-	}
-
-	return {
-		doSomething: doSomething,
-		doAnother: doAnother
-	};
-}
-
-var foo = CoolModule();
-
-foo.doSomething(); // cool
-foo.doAnother(); // 1 ! 2 ! 3
-```
-
-This is the pattern in JavaScript we call *module*. The most common way of implementing the module pattern is often called "Revealing Module", and it's the variation we present here.
-
-Let's examine some things about this code.
-
-Firstly, `CoolModule()` is just a function, but it *has to be invoked* for there to be a module instance created. Without the execution of the outer function, the creation of the inner scope and the closures would not occur.
-
-Secondly, the `CoolModule()` function returns an object, denoted by the object-literal syntax `{ key: value, ... }`. The object we return has references on it to our inner functions, but *not* to our inner data variables. We keep those hidden and private. It's appropriate to think of this object return value as essentially a **public API for our module**.
-
-This object return value is ultimately assigned to the outer variable `foo`, and then we can access those property methods on the API, like `foo.doSomething()`.
-
-**Note:** It is not required that we return an actual object (literal) from our module. We could just return back an inner function directly. jQuery is actually a good example of this. The `jQuery` and `$` identifiers are the public API for the jQuery "module", but they are, themselves, just a function (which can itself have properties, since all functions are objects).
-
-The `doSomething()` and `doAnother()` functions have closure over the inner scope of the module "instance" (arrived at by actually invoking `CoolModule()`). When we transport those functions outside of the lexical scope, by way of property references on the object we return, we have now set up a condition by which closure can be observed and exercised.
-
-To state it more simply, there are two "requirements" for the module pattern to be exercised:
-
-1. There must be an outer enclosing function, and it must be invoked at least once (each time creates a new module instance).
-
-2. The enclosing function must return back at least one inner function, so that this inner function has closure over the private scope, and can access and/or modify that private state.
-
-An object with a function property on it alone is not *really* a module. An object which is returned from a function invocation which only has data properties on it and no closured functions is not *really* a module, in the observable sense.
-
-The code snippet above shows a standalone module creator called `CoolModule()` which can be invoked any number of times, each time creating a new module instance. A slight variation on this pattern is when you only care to have one instance, a "singleton" of sorts:
-
-```js
-var foo = (function CoolModule() {
-	var something = "cool";
-	var another = [1, 2, 3];
-
-	function doSomething() {
-		console.log( something );
-	}
-
-	function doAnother() {
-		console.log( another.join( " ! " ) );
-	}
-
-	return {
-		doSomething: doSomething,
-		doAnother: doAnother
-	};
-})();
-
-foo.doSomething(); // cool
-foo.doAnother(); // 1 ! 2 ! 3
-```
-
-Here, we turned our module function into an IIFE (see Chapter 3), and we *immediately* invoked it and assigned its return value directly to our single module instance identifier `foo`.
-
-Modules are just functions, so they can receive parameters:
-
-```js
-function CoolModule(id) {
-	function identify() {
-		console.log( id );
-	}
-
-	return {
-		identify: identify
-	};
-}
-
-var foo1 = CoolModule( "foo 1" );
-var foo2 = CoolModule( "foo 2" );
-
-foo1.identify(); // "foo 1"
-foo2.identify(); // "foo 2"
-```
-
-Another slight but powerful variation on the module pattern is to name the object you are returning as your public API:
-
-```js
-var foo = (function CoolModule(id) {
-	function change() {
-		// modifying the public API
-		publicAPI.identify = identify2;
-	}
-
-	function identify1() {
-		console.log( id );
-	}
-
-	function identify2() {
-		console.log( id.toUpperCase() );
-	}
-
-	var publicAPI = {
-		change: change,
-		identify: identify1
-	};
-
-	return publicAPI;
-})( "foo module" );
-
-foo.identify(); // foo module
-foo.change();
-foo.identify(); // FOO MODULE
-```
-
-By retaining an inner reference to the public API object inside your module instance, you can modify that module instance **from the inside**, including adding and removing methods, properties, *and* changing their values.
-
-### Modern Modules
-
-Various module dependency loaders/managers essentially wrap up this pattern of module definition into a friendly API. Rather than examine any one particular library, let me present a *very simple* proof of concept **for illustration purposes (only)**:
-
-```js
-var MyModules = (function Manager() {
-	var modules = {};
-
-	function define(name, deps, impl) {
-		for (var i=0; i<deps.length; i++) {
-			deps[i] = modules[deps[i]];
-		}
-		modules[name] = impl.apply( impl, deps );
-	}
-
-	function get(name) {
-		return modules[name];
-	}
-
-	return {
-		define: define,
-		get: get
-	};
-})();
-```
-
-The key part of this code is `modules[name] = impl.apply(impl, deps)`. This is invoking the definition wrapper function for a module (passing in any dependencies), and storing the return value, the module's API, into an internal list of modules tracked by name.
-
-And here's how I might use it to define some modules:
-
-```js
-MyModules.define( "bar", [], function(){
-	function hello(who) {
-		return "Let me introduce: " + who;
-	}
-
-	return {
-		hello: hello
-	};
-} );
-
-MyModules.define( "foo", ["bar"], function(bar){
-	var hungry = "hippo";
-
-	function awesome() {
-		console.log( bar.hello( hungry ).toUpperCase() );
-	}
-
-	return {
-		awesome: awesome
-	};
-} );
-
-var bar = MyModules.get( "bar" );
-var foo = MyModules.get( "foo" );
-
-console.log(
-	bar.hello( "hippo" )
-); // Let me introduce: hippo
-
-foo.awesome(); // LET ME INTRODUCE: HIPPO
-```
-
-Both the "foo" and "bar" modules are defined with a function that returns a public API. "foo" even receives the instance of "bar" as a dependency parameter, and can use it accordingly.
-
-Spend some time examining these code snippets to fully understand the power of closures put to use for our own good purposes. The key take-away is that there's not really any particular "magic" to module managers. They fulfill both characteristics of the module pattern I listed above: invoking a function definition wrapper, and keeping its return value as the API for that module.
-
-In other words, modules are just modules, even if you put a friendly wrapper tool on top of them.
-
-### Future Modules
-
-ES6 adds first-class syntax support for the concept of modules. When loaded via the module system, ES6 treats a file as a separate module. Each module can both import other modules or specific API members, as well export their own public API members.
-
-**Note:** Function-based modules aren't a statically recognized pattern (something the compiler knows about), so their API semantics aren't considered until run-time. That is, you can actually modify a module's API during the run-time (see earlier `publicAPI` discussion).
-
-By contrast, ES6 Module APIs are static (the APIs don't change at run-time). Since the compiler knows *that*, it can (and does!) check during (file loading and) compilation that a reference to a member of an imported module's API *actually exists*. If the API reference doesn't exist, the compiler throws an "early" error at compile-time, rather than waiting for traditional dynamic run-time resolution (and errors, if any).
-
-ES6 modules **do not** have an "inline" format, they must be defined in separate files (one per module). The browsers/engines have a default "module loader" (which is overridable, but that's well-beyond our discussion here) which synchronously loads a module file when it's imported.
+**Note:** We will see shortly that it *is* possible for an object to have an empty `[[Prototype]]` linkage, though this is somewhat less common.
 
 Consider:
 
-**bar.js**
 ```js
-function hello(who) {
-	return "Let me introduce: " + who;
+var myObject = {
+	a: 2
+};
+
+myObject.a; // 2
+```
+
+What is the `[[Prototype]]` reference used for? In Chapter 3, we examined the `[[Get]]` operation that is invoked when you reference a property on an object, such as `myObject.a`. For that default `[[Get]]` operation, the first step is to check if the object itself has a property `a` on it, and if so, it's used.
+
+**Note:** ES6 Proxies are outside of our discussion scope in this book (will be covered in a later book in the series!), but everything we discuss here about normal `[[Get]]` and `[[Put]]` behavior does not apply if a `Proxy` is involved.
+
+But it's what happens if `a` **isn't** present on `myObject` that brings our attention now to the `[[Prototype]]` link of the object.
+
+The default `[[Get]]` operation proceeds to follow the `[[Prototype]]` **link** of the object if it cannot find the requested property on the object directly.
+
+```js
+var anotherObject = {
+	a: 2
+};
+
+// create an object linked to `anotherObject`
+var myObject = Object.create( anotherObject );
+
+myObject.a; // 2
+```
+
+**Note:** We will explain what `Object.create(..)` does, and how it operates, shortly. For now, just assume it creates an object with the `[[Prototype]]` linkage we're examining to the object specified.
+
+So, we have `myObject` that is now `[[Prototype]]` linked to `anotherObject`. Clearly `myObject.a` doesn't actually exist, but nevertheless, the property access succeeds (being found on `anotherObject` instead) and indeed finds the value `2`.
+
+But, if `a` weren't found on `anotherObject` either, its `[[Prototype]]` chain, if non-empty, is again consulted and followed.
+
+This process continues until either a matching property name is found, or the `[[Prototype]]` chain ends. If no matching property is *ever* found by the end of the chain, the return result from the `[[Get]]` operation is `undefined`.
+
+Similar to this `[[Prototype]]` chain look-up process, if you use a `for..in` loop to iterate over an object, any property that can be reached via its chain (and is also `enumerable` -- see Chapter 3) will be enumerated. If you use the `in` operator to test for the existence of a property on an object, `in` will check the entire chain of the object (regardless of *enumerability*).
+
+```js
+var anotherObject = {
+	a: 2
+};
+
+// create an object linked to `anotherObject`
+var myObject = Object.create( anotherObject );
+
+for (var k in myObject) {
+	console.log("found: " + k);
+}
+// found: a
+
+("a" in myObject); // true
+```
+
+So, the `[[Prototype]]` chain is consulted, one link at a time, when you perform property look-ups in various fashions. The look-up stops once the property is found or the chain ends.
+
+### `Object.prototype`
+
+But *where* exactly does the `[[Prototype]]` chain "end"?
+
+The top-end of every *normal* `[[Prototype]]` chain is the built-in `Object.prototype`. This object includes a variety of common utilities used all over JS, because all normal (built-in, not host-specific extension) objects in JavaScript "descend from" (aka, have at the top of their `[[Prototype]]` chain) the `Object.prototype` object.
+
+Some utilities found here you may be familiar with include `.toString()` and `.valueOf()`. In Chapter 3, we introduced another: `.hasOwnProperty(..)`. And yet another function on `Object.prototype` you may not be familiar with, but which we'll address later in this chapter, is `.isPrototypeOf(..)`.
+
+### Setting & Shadowing Properties
+
+Back in Chapter 3, we mentioned that setting properties on an object was more nuanced than just adding a new property to the object or changing an existing property's value. We will now revisit this situation more completely.
+
+```js
+myObject.foo = "bar";
+```
+
+If the `myObject` object already has a normal data accessor property called `foo` directly present on it, the assignment is as simple as changing the value of the existing property.
+
+If `foo` is not already present directly on `myObject`, the `[[Prototype]]` chain is traversed, just like for the `[[Get]]` operation. If `foo` is not found anywhere in the chain, the property `foo` is added directly to `myObject` with the specified value, as expected.
+
+However, if `foo` is already present somewhere higher in the chain, nuanced (and perhaps surprising) behavior can occur with the `myObject.foo = "bar"` assignment. We'll examine that more in just a moment.
+
+If the property name `foo` ends up both on `myObject` itself and at a higher level of the `[[Prototype]]` chain that starts at `myObject`, this is called *shadowing*. The `foo` property directly on `myObject` *shadows* any `foo` property which appears higher in the chain, because the `myObject.foo` look-up would always find the `foo` property that's lowest in the chain.
+
+As we just hinted, shadowing `foo` on `myObject` is not as simple as it may seem. We will now examine three scenarios for the `myObject.foo = "bar"` assignment when `foo` is **not** already on `myObject` directly, but **is** at a higher level of `myObject`'s `[[Prototype]]` chain:
+
+1. If a normal data accessor (see Chapter 3) property named `foo` is found anywhere higher on the `[[Prototype]]` chain, **and it's not marked as read-only (`writable:false`)** then a new property called `foo` is added directly to `myObject`, resulting in a **shadowed property**.
+2. If a `foo` is found higher on the `[[Prototype]]` chain, but it's marked as **read-only (`writable:false`)**, then both the setting of that existing property as well as the creation of the shadowed property on `myObject` **are disallowed**. If the code is running in `strict mode`, an error will be thrown. Otherwise, the setting of the property value will silently be ignored. Either way, **no shadowing occurs**.
+3. If a `foo` is found higher on the `[[Prototype]]` chain and it's a setter (see Chapter 3), then the setter will always be called. No `foo` will be added to (aka, shadowed on) `myObject`, nor will the `foo` setter be redefined.
+
+Most developers assume that assignment of a property (`[[Put]]`) will always result in shadowing if the property already exists higher on the `[[Prototype]]` chain, but as you can see, that's only true in one (#1) of the three situations just described.
+
+If you want to shadow `foo` in cases #2 and #3, you cannot use `=` assignment, but must instead use `Object.defineProperty(..)` (see Chapter 3) to add `foo` to `myObject`.
+
+**Note:** Case #2 may be the most surprising of the three. The presence of a *read-only* property prevents a property of the same name being implicitly created (shadowed) at a lower level of a `[[Prototype]]` chain. The reason for this restriction is primarily to reinforce the illusion of class-inherited properties. If you think of the `foo` at a higher level of the chain as having been inherited (copied down) to `myObject`, then it makes sense to enforce the non-writable nature of that `foo` property on `myObject`. If you however separate the illusion from the fact, and recognize that no such inheritance copying *actually* occurred (see Chapters 4 and 5), it's a little unnatural that `myObject` would be prevented from having a `foo` property just because some other object had a non-writable `foo` on it. It's even stranger that this restriction only applies to `=` assignment, but is not enforced when using `Object.defineProperty(..)`.
+
+Shadowing with **methods** leads to ugly *explicit pseudo-polymorphism* (see Chapter 4) if you need to delegate between them. Usually, shadowing is more complicated and nuanced than it's worth, **so you should try to avoid it if possible**. See Chapter 6 for an alternative design pattern, which among other things discourages shadowing in favor of cleaner alternatives.
+
+Shadowing can even occur implicitly in subtle ways, so care must be taken if trying to avoid it. Consider:
+
+```js
+var anotherObject = {
+	a: 2
+};
+
+var myObject = Object.create( anotherObject );
+
+anotherObject.a; // 2
+myObject.a; // 2
+
+anotherObject.hasOwnProperty( "a" ); // true
+myObject.hasOwnProperty( "a" ); // false
+
+myObject.a++; // oops, implicit shadowing!
+
+anotherObject.a; // 2
+myObject.a; // 3
+
+myObject.hasOwnProperty( "a" ); // true
+```
+
+Though it may appear that `myObject.a++` should (via delegation) look-up and just increment the `anotherObject.a` property itself *in place*, instead the `++` operation corresponds to `myObject.a = myObject.a + 1`. The result is `[[Get]]` looking up `a` property via `[[Prototype]]` to get the current value `2` from `anotherObject.a`, incrementing the value by one, then `[[Put]]` assigning the `3` value to a new shadowed property `a` on `myObject`. Oops!
+
+Be very careful when dealing with delegated properties that you modify. If you wanted to increment `anotherObject.a`, the only proper way is `anotherObject.a++`.
+
+## "Class"
+
+At this point, you might be wondering: "*Why* does one object need to link to another object?" What's the real benefit? That is a very appropriate question to ask, but we must first understand what `[[Prototype]]` is **not** before we can fully understand and appreciate what it *is* and how it's useful.
+
+As we explained in Chapter 4, in JavaScript, there are no abstract patterns/blueprints for objects called "classes" as there are in class-oriented languages. JavaScript **just** has objects.
+
+In fact, JavaScript is **almost unique** among languages as perhaps the only language with the right to use the label "object oriented", because it's one of a very short list of languages where an object can be created directly, without a class at all.
+
+In JavaScript, classes can't (being that they don't exist!) describe what an object can do. The object defines its own behavior directly. **There's *just* the object.**
+
+### "Class" Functions
+
+There's a peculiar kind of behavior in JavaScript that has been shamelessly abused for years to *hack* something that *looks* like "classes". We'll examine this approach in detail.
+
+The peculiar "sort-of class" behavior hinges on a strange characteristic of functions: all functions by default get a public, non-enumerable (see Chapter 3) property on them called `prototype`, which points at an otherwise arbitrary object.
+
+```js
+function Foo() {
+	// ...
 }
 
-export hello;
+Foo.prototype; // { }
 ```
 
-**foo.js**
+This object is often called "Foo's prototype", because we access it via an unfortunately-named `Foo.prototype` property reference. However, that terminology is hopelessly destined to lead us into confusion, as we'll see shortly. Instead, I will call it "the object formerly known as Foo's prototype". Just kidding. How about: "object arbitrarily labeled 'Foo dot prototype'"?
+
+Whatever we call it, what exactly is this object?
+
+The most direct way to explain it is that each object created from calling `new Foo()` (see Chapter 2) will end up (somewhat arbitrarily) `[[Prototype]]`-linked to this "Foo dot prototype" object.
+
+Let's illustrate:
+
 ```js
-// import only `hello()` from the "bar" module
-import hello from "bar";
-
-var hungry = "hippo";
-
-function awesome() {
-	console.log(
-		hello( hungry ).toUpperCase()
-	);
+function Foo() {
+	// ...
 }
 
-export awesome;
+var a = new Foo();
+
+Object.getPrototypeOf( a ) === Foo.prototype; // true
 ```
+
+When `a` is created by calling `new Foo()`, one of the things (see Chapter 2 for all *four* steps) that happens is that `a` gets an internal `[[Prototype]]` link to the object that `Foo.prototype` is pointing at.
+
+Stop for a moment and ponder the implications of that statement.
+
+In class-oriented languages, multiple **copies** (aka, "instances") of a class can be made, like stamping something out from a mold. As we saw in Chapter 4, this happens because the process of instantiating (or inheriting from) a class means, "copy the behavior plan from that class into a physical object", and this is done again for each new instance.
+
+But in JavaScript, there are no such copy-actions performed. You don't create multiple instances of a class. You can create multiple objects that `[[Prototype]]` *link* to a common object. But by default, no copying occurs, and thus these objects don't end up totally separate and disconnected from each other, but rather, quite ***linked***.
+
+`new Foo()` results in a new object (we called it `a`), and **that** new object `a` is internally `[[Prototype]]` linked to the `Foo.prototype` object.
+
+**We end up with two objects, linked to each other.** That's *it*. We didn't instantiate a class. We certainly didn't do any copying of behavior from a "class" into a concrete object. We just caused two objects to be linked to each other.
+
+In fact, the secret, which eludes most JS developers, is that the `new Foo()` function calling had really almost nothing *direct* to do with the process of creating the link. **It was sort of an accidental side-effect.** `new Foo()` is an indirect, round-about way to end up with what we want: **a new object linked to another object**.
+
+Can we get what we want in a more *direct* way? **Yes!** The hero is `Object.create(..)`. But we'll get to that in a little bit.
+
+#### What's in a name?
+
+In JavaScript, we don't make *copies* from one object ("class") to another ("instance"). We make *links* between objects. For the `[[Prototype]]` mechanism, visually, the arrows move from right to left, and from bottom to top.
+
+<img src="fig3.png">
+
+This mechanism is often called "prototypal inheritance" (we'll explore the code in detail shortly), which is commonly said to be the dynamic-language version of "classical inheritance". It's an attempt to piggy-back on the common understanding of what "inheritance" means in the class-oriented world, but *tweak* (**read: pave over**) the understood semantics, to fit dynamic scripting.
+
+The word "inheritance" has a very strong meaning (see Chapter 4), with plenty of mental precedent. Merely adding "prototypal" in front to distinguish the *actually nearly opposite* behavior in JavaScript has left in its wake nearly two decades of miry confusion.
+
+I like to say that sticking "prototypal" in front "inheritance" to drastically reverse its actual meaning is like holding an orange in one hand, an apple in the other, and insisting on calling the apple a "red orange". No matter what confusing label I put in front of it, that doesn't change the *fact* that one fruit is an apple and the other is an orange.
+
+The better approach is to plainly call an apple an apple -- to use the most accurate and direct terminology. That makes it easier to understand both their similarities and their **many differences**, because we all have a simple, shared understanding of what "apple" means.
+
+Because of the confusion and conflation of terms, I believe the label "prototypal inheritance" itself (and trying to mis-apply all its associated class-orientation terminology, like "class", "constructor", "instance", "polymorphism", etc) has done **more harm than good** in explaining how JavaScript's mechanism *really* works.
+
+"Inheritance" implies a *copy* operation, and JavaScript doesn't copy object properties (natively, by default). Instead, JS creates a link between two objects, where one object can essentially *delegate* property/function access to another object. "Delegation" (see Chapter 6) is a much more accurate term for JavaScript's object-linking mechanism.
+
+Another term which is sometimes thrown around in JavaScript is "differential inheritance". The idea here is that we describe an object's behavior in terms of what is *different* from a more general descriptor. For example, you explain that a car is a kind of vehicle, but one that has exactly 4 wheels, rather than re-describing all the specifics of what makes up a general vehicle (engine, etc).
+
+If you try to think of any given object in JS as the sum total of all behavior that is *available* via delegation, and **in your mind you flatten** all that behavior into one tangible *thing*, then you can (sorta) see how "differential inheritance" might fit.
+
+But just like with "prototypal inheritance", "differential inheritance" pretends that your mental model is more important than what is physically happening in the language. It overlooks the fact that object `B` is not actually differentially constructed, but is instead built with specific characteristics defined, alongside "holes" where nothing is defined. It is in these "holes" (gaps in, or lack of, definition) that delegation *can* take over and, on the fly, "fill them in" with delegated behavior.
+
+The object is not, by native default, flattened into the single differential object, **through copying**, that the mental model of "differential inheritance" implies. As such, "differential inheritance" is just not as natural a fit for describing how JavaScript's `[[Prototype]]` mechanism actually works.
+
+You *can choose* to prefer the "differential inheritance" terminology and mental model, as a matter of taste, but there's no denying the fact that it *only* fits the mental acrobatics in your mind, not the physical behavior in the engine.
+
+### "Constructors"
+
+Let's go back to some earlier code:
 
 ```js
-// import the entire "foo" and "bar" modules
-module foo from "foo";
-module bar from "bar";
+function Foo() {
+	// ...
+}
 
-console.log(
-	bar.hello( "rhino" )
-); // Let me introduce: rhino
-
-foo.awesome(); // LET ME INTRODUCE: HIPPO
+var a = new Foo();
 ```
 
-**Note:** Separate files **"foo.js"** and **"bar.js"** would need to be created, with the contents as shown in the first two snippets, respectively. Then, your program would load/import those modules to use them, as shown in the third snippet.
+What exactly leads us to think `Foo` is a "class"?
 
-`import` imports one or more members from a module's API into the current scope, each to a bound variable (`hello` in our case). `module` imports an entire module API to a bound variable (`foo`, `bar` in our case). `export` exports an identifier (variable, function) to the public API for the current module. These operators can be used as many times in a module's definition as is necessary.
+For one, we see the use of the `new` keyword, just like class-oriented languages do when they construct class instances. For another, it appears that we are in fact executing a *constructor* method of a class, because `Foo()` is actually a method that gets called, just like how a real class's constructor gets called when you instantiate that class.
 
-The contents inside the *module file* are treated as if enclosed in a scope closure, just like with the function-closure modules seen earlier.
+To further the confusion of "constructor" semantics, the arbitrarily labeled `Foo.prototype` object has another trick up its sleeve. Consider this code:
+
+```js
+function Foo() {
+	// ...
+}
+
+Foo.prototype.constructor === Foo; // true
+
+var a = new Foo();
+a.constructor === Foo; // true
+```
+
+The `Foo.prototype` object by default (at declaration time on line 1 of the snippet!) gets a public, non-enumerable (see Chapter 3) property called `.constructor`, and this property is a reference back to the function (`Foo` in this case) that the object is associated with. Moreover, we see that object `a` created by the "constructor" call `new Foo()` *seems* to also have a property on it called `.constructor` which similarly points to "the function which created it".
+
+**Note:** This is not actually true. `a` has no `.constructor` property on it, and though `a.constructor` does in fact resolve to the `Foo` function, "constructor" **does not actually mean** "was constructed by", as it appears. We'll explain this strangeness shortly.
+
+Oh, yeah, also... by convention in the JavaScript world, "class"es are named with a capital letter, so the fact that it's `Foo` instead of `foo` is a strong clue that we intend it to be a "class". That's totally obvious to you, right!?
+
+**Note:** This convention is so strong that many JS linters actually *complain* if you call `new` on a method with a lowercase name, or if we don't call `new` on a function that happens to start with a capital letter. That sort of boggles the mind that we struggle so much to get (fake) "class-orientation" *right* in JavaScript that we create linter rules to ensure we use capital letters, even though the capital letter doesn't mean ***anything* at all** to the JS engine.
+
+#### Constructor Or Call?
+
+In the above snippet, it's tempting to think that `Foo` is a "constructor", because we call it with `new` and we observe that it "constructs" an object.
+
+In reality, `Foo` is no more a "constructor" than any other function in your program. Functions themselves are **not** constructors. However, when you put the `new` keyword in front of a normal function call, that makes that function call a "constructor call". In fact, `new` sort of hijacks any normal function and calls it in a fashion that constructs an object, **in addition to whatever else it was going to do**.
+
+For example:
+
+```js
+function NothingSpecial() {
+	console.log( "Don't mind me!" );
+}
+
+var a = new NothingSpecial();
+// "Don't mind me!"
+
+a; // {}
+```
+
+`NothingSpecial` is just a plain old normal function, but when called with `new`, it *constructs* an object, almost as a side-effect, which we happen to assign to `a`. The **call** was a *constructor call*, but `NothingSpecial` is not, in and of itself, a *constructor*.
+
+In other words, in JavaScript, it's most appropriate to say that a "constructor" is **any function called with the `new` keyword** in front of it.
+
+Functions aren't constructors, but function calls are "constructor calls" if and only if `new` is used.
+
+### Mechanics
+
+Are *those* the only common triggers for ill-fated "class" discussions in JavaScript?
+
+**Not quite.** JS developers have strived to simulate as much as they can of class-orientation:
+
+```js
+function Foo(name) {
+	this.name = name;
+}
+
+Foo.prototype.myName = function() {
+	return this.name;
+};
+
+var a = new Foo( "a" );
+var b = new Foo( "b" );
+
+a.myName(); // "a"
+b.myName(); // "b"
+```
+
+This snippet shows two additional "class-orientation" tricks in play:
+
+1. `this.name = name`: adds the `.name` property onto each object (`a` and `b`, respectively; see Chapter 2 about `this` binding), similar to how class instances encapsulate data values.
+
+2. `Foo.prototype.myName = ...`: perhaps the more interesting technique, this adds a property (function) to the `Foo.prototype` object. Now, `a.myName()` works, but perhaps surprisingly. How?
+
+In the above snippet, it's strongly tempting to think that when `a` and `b` are created, the properties/functions on the `Foo.prototype` object are *copied* over to each of `a` and `b` objects. **However, that's not what happens.**
+
+At the beginning of this chapter, we explained the `[[Prototype]]` link, and how it provides the fall-back look-up steps if a property reference isn't found directly on an object, as part of the default `[[Get]]` algorithm.
+
+So, by virtue of how they are created, `a` and `b` each end up with an internal `[[Prototype]]` linkage to `Foo.prototype`. When `myName` is not found on `a` or `b`, respectively, it's instead found (through delegation, see Chapter 6) on `Foo.prototype`.
+
+#### "Constructor" Redux
+
+Recall the discussion from earlier about the `.constructor` property, and how it *seems* like `a.constructor === Foo` being true means that `a` has an actual `.constructor` property on it, pointing at `Foo`? **Not correct.**
+
+This is just unfortunate confusion. In actuality, the `.constructor` reference is also *delegated* up to `Foo.prototype`, which **happens to**, by default, have a `.constructor` that points at `Foo`.
+
+It *seems* awfully convenient that an object `a` "constructed by" `Foo` would have access to a `.constructor` property that points to `Foo`. But that's nothing more than a false sense of security. It's a happy accident, almost tangentially, that `a.constructor` *happens* to point at `Foo` via this default `[[Prototype]]` delegation. There's actually several ways that the ill-fated assumption of `.constructor` meaning "was constructed by" can come back to bite you.
+
+For one, the `.constructor` property on `Foo.prototype` is only there by default on the object created when `Foo` the function is declared. If you create a new object, and replace a function's default `.prototype` object reference, the new object will not by default magically get a `.constructor` on it.
+
+Consider:
+
+```js
+function Foo() { /* .. */ }
+
+Foo.prototype = { /* .. */ }; // create a new prototype object
+
+var a1 = new Foo();
+a1.constructor === Foo; // false!
+a1.constructor === Object; // true!
+```
+
+`Object(..)` didn't "construct" `a1` did it? It sure seems like `Foo()` "constructed" it. Many developers think of `Foo()` as doing the construction, but where everything falls apart is when you think "constructor" means "was constructed by", because by that reasoning, `a1.constructor` should be `Foo`, but it isn't!
+
+What's happening? `a1` has no `.constructor` property, so it delegates up the `[[Prototype]]` chain to `Foo.prototype`. But that object doesn't have a `.constructor` either (like the default `Foo.prototype` object would have had!), so it keeps delegating, this time up to `Object.prototype`, the top of the delegation chain. *That* object indeed has a `.constructor` on it, which points to the built-in `Object(..)` function.
+
+**Misconception, busted.**
+
+Of course, you can add `.constructor` back to the `Foo.prototype` object, but this takes manual work, especially if you want to match native behavior and have it be non-enumerable (see Chapter 3).
+
+For example:
+
+```js
+function Foo() { /* .. */ }
+
+Foo.prototype = { /* .. */ }; // create a new prototype object
+
+// Need to properly "fix" the missing `.constructor`
+// property on the new object serving as `Foo.prototype`.
+// See Chapter 3 for `defineProperty(..)`.
+Object.defineProperty( Foo.prototype, "constructor" , {
+	enumerable: false,
+	writable: true,
+	configurable: true,
+	value: Foo    // point `.constructor` at `Foo`
+} );
+```
+
+That's a lot of manual work to fix `.constructor`. Moreover, all we're really doing is perpetuating the misconception that "constructor" means "was constructed by". That's an *expensive* illusion.
+
+The fact is, `.constructor` on an object arbitrarily points, by default, at a function who, reciprocally, has a reference back to the object -- a reference which it calls `.prototype`. The words "constructor" and "prototype" only have a loose default meaning that might or might not hold true later. The best thing to do is remind yourself, "constructor does not mean constructed by".
+
+`.constructor` is not a magic immutable property. It *is* non-enumerable (see snippet above), but its value is writable (can be changed), and moreover, you can add or overwrite (intentionally or accidentally) a property of the name `constructor` on any object in any `[[Prototype]]` chain, with any value you see fit.
+
+By virtue of how the `[[Get]]` algorithm traverses the `[[Prototype]]` chain, a `.constructor` property reference found anywhere may resolve quite differently than you'd expect.
+
+See how arbitrary its meaning actually is?
+
+The result? Some arbitrary object-property reference like `a1.constructor` cannot actually be *trusted* to be the assumed default function reference. Moreover, as we'll see shortly, just by simple omission, `a1.constructor` can even end up pointing somewhere quite surprising and insensible.
+
+`a1.constructor` is extremely unreliable, and an unsafe reference to rely upon in your code. **Generally, such references should be avoided where possible.**
+
+## "(Prototypal) Inheritance"
+
+We've seen some approximations of "class" mechanics as typically hacked into JavaScript programs. But JavaScript "class"es would be rather hollow if we didn't have an approximation of "inheritance".
+
+Actually, we've already seen the mechanism which is commonly called "prototypal inheritance" at work when `a` was able to "inherit from" `Foo.prototype`, and thus get access to the `myName()` function. But we traditionally think of "inheritance" as being a relationship between two "classes", rather than between "class" and "instance".
+
+<img src="fig3.png">
+
+Recall this figure from earlier, which shows not only delegation from an object (aka, "instance") `a1` to object `Foo.prototype`, but from `Bar.prototype` to `Foo.prototype`, which somewhat resembles the concept of Parent-Child class inheritance. *Resembles*, except of course for the direction of the arrows, which show these are delegation links rather than copy operations.
+
+And, here's the typical "prototype style" code that creates such links:
+
+```js
+function Foo(name) {
+	this.name = name;
+}
+
+Foo.prototype.myName = function() {
+	return this.name;
+};
+
+function Bar(name,label) {
+	Foo.call( this, name );
+	this.label = label;
+}
+
+// here, we make a new `Bar.prototype`
+// linked to `Foo.prototype`
+Bar.prototype = Object.create( Foo.prototype );
+
+// Beware! Now `Bar.prototype.constructor` is gone,
+// and might need to be manually "fixed" if you're
+// in the habit of relying on such properties!
+
+Bar.prototype.myLabel = function() {
+	return this.label;
+};
+
+var a = new Bar( "a", "obj a" );
+
+a.myName(); // "a"
+a.myLabel(); // "obj a"
+```
+
+**Note:** To understand why `this` points to `a` in the above code snippet, see Chapter 2.
+
+The important part is `Bar.prototype = Object.create( Foo.prototype )`. `Object.create(..)` *creates* a "new" object out of thin air, and links that new object's internal `[[Prototype]]` to the object you specify (`Foo.prototype` in this case).
+
+In other words, that line says: "make a *new* 'Bar dot prototype' object that's linked to 'Foo dot prototype'."
+
+When `function Bar() { .. }` is declared, `Bar`, like any other function, has a `.prototype` link to its default object. But *that* object is not linked to `Foo.prototype` like we want. So, we create a *new* object that *is* linked as we want, effectively throwing away the original incorrectly-linked object.
+
+**Note:** A common mis-conception/confusion here is that either of the following approaches would *also* work, but they do not work as you'd expect:
+
+```js
+// doesn't work like you want!
+Bar.prototype = Foo.prototype;
+
+// works kinda like you want, but with
+// side-effects you probably don't want :(
+Bar.prototype = new Foo();
+```
+
+`Bar.prototype = Foo.prototype` doesn't create a new object for `Bar.prototype` to be linked to. It just makes `Bar.prototype` be another reference to `Foo.prototype`, which effectively links `Bar` directly to **the same object as** `Foo` links to: `Foo.prototype`. This means when you start assigning, like `Bar.prototype.myLabel = ...`, you're modifying **not a separate object** but *the* shared `Foo.prototype` object itself, which would affect any objects linked to `Foo.prototype`. This is almost certainly not what you want. If it *is* what you want, then you likely don't need `Bar` at all, and should just use only `Foo` and make your code simpler.
+
+`Bar.prototype = new Foo()` **does in fact** create a new object which is duly linked to `Foo.prototype` as we'd want. But, it uses the `Foo(..)` "constructor call" to do it. If that function has any side-effects (such as logging, changing state, registering against other objects, **adding data properties to `this`**, etc.), those side-effects happen at the time of this linking (and likely against the wrong object!), rather than only when the eventual `Bar()` "descendents" are created, as would likely be expected.
+
+So, we're left with using `Object.create(..)` to make a new object that's properly linked, but without having the side-effects of calling `Foo(..)`. The slight downside is that we have to create a new object, throwing the old one away, instead of modifying the existing default object we're provided.
+
+It would be *nice* if there was a standard and reliable way to modify the linkage of an existing object. Prior to ES6, there's a non-standard and not fully-cross-browser way, via the `.__proto__` property, which is settable. ES6 adds a `Object.setPrototypeOf(..)` helper utility, which does the trick in a standard and predictable way.
+
+Compare the pre-ES6 and ES6-standardized techniques for linking `Bar.prototype` to `Foo.prototype`, side-by-side:
+
+```js
+// pre-ES6
+// throws away default existing `Bar.prototype`
+Bar.prototype = Object.create( Foo.prototype );
+
+// ES6+
+// modifies existing `Bar.prototype`
+Object.setPrototypeOf( Bar.prototype, Foo.prototype );
+```
+
+Ignoring the slight performance disadvantage (throwing away an object that's later garbage collected) of the `Object.create(..)` approach, it's a little bit shorter and may be perhaps a little easier to read than the ES6+ approach. But it's probably a syntactic wash either way.
+
+### Inspecting "Class" Relationships
+
+What if you have an object like `a` and want to find out what object (if any) it delegates to? Inspecting an instance (just an object in JS) for its inheritance ancestry (delegation linkage in JS) is often called *introspection* (or *reflection*) in traditional class-oriented environments.
+
+Consider:
+
+```js
+function Foo() {
+	// ...
+}
+
+Foo.prototype.blah = ...;
+
+var a = new Foo();
+```
+
+How do we then introspect `a` to find out its "ancestry" (delegation linkage)? The first approach embraces the "class" confusion:
+
+```js
+a instanceof Foo; // true
+```
+
+The `instanceof` operator takes a plain object as its left-hand operand and a **function** as its right-hand operand. The question `instanceof` answers is: **in the entire `[[Prototype]]` chain of `a`, does the object arbitrarily pointed to by `Foo.prototype` ever appear?**
+
+Unfortunately, this means that you can only inquire about the "ancestry" of some object (`a`) if you have some **function** (`Foo`, with its attached `.prototype` reference) to test with. If you have two arbitrary objects, say `a` and `b`, and want to find out if *the objects* are related to each other through a `[[Prototype]]` chain, `instanceof` alone can't help.
+
+**Note:** If you use the built-in `.bind(..)` utility to make a hard-bound function (see Chapter 2), the function created will not have a `.prototype` property. Using `instanceof` with such a function transparently substitutes the `.prototype` of the *target function* that the hard-bound function was created from.
+
+It's fairly uncommon to use hard-bound functions as "constructor calls", but if you do, it will behave as if the original *target function* was invoked instead, which means that using `instanceof` with a hard-bound function also behaves according to the original function.
+
+This snippet illustrates the ridiculousness of trying to reason about relationships between **two objects** using "class" semantics and `instanceof`:
+
+```js
+// helper utility to see if `o1` is
+// related to (delegates to) `o2`
+function isRelatedTo(o1, o2) {
+	function F(){}
+	F.prototype = o2;
+	return o1 instanceof F;
+}
+
+var a = {};
+var b = Object.create( a );
+
+isRelatedTo( b, a ); // true
+```
+
+Inside `isRelatedTo(..)`, we borrow a throw-away function `F`, reassign its `.prototype` to arbitrarily point to some object `o2`, then ask if `o1` is an "instance of" `F`. Obviously `o1` isn't *actually* inherited or descended or even constructed from `F`, so it should be clear why this kind of exercise is silly and confusing. **The problem comes down to the awkwardness of class semantics forced upon JavaScript**, in this case as revealed by the indirect semantics of `instanceof`.
+
+The second, and much cleaner, approach to `[[Prototype]]` reflection is:
+
+```js
+Foo.prototype.isPrototypeOf( a ); // true
+```
+
+Notice that in this case, we don't really care about (or even *need*) `Foo`, we just need an **object** (in our case, arbitrarily labeled `Foo.prototype`) to test against another **object**. The question `isPrototypeOf(..)` answers is: **in the entire `[[Prototype]]` chain of `a`, does `Foo.prototype` ever appear?**
+
+Same question, and exact same answer. But in this second approach, we don't actually need the indirection of referencing a **function** (`Foo`) whose `.prototype` property will automatically be consulted.
+
+We *just need* two **objects** to inspect a relationship between them. For example:
+
+```js
+// Simply: does `b` appear anywhere in
+// `c`s [[Prototype]] chain?
+b.isPrototypeOf( c );
+```
+
+Notice, this approach doesn't require a function ("class") at all. It just uses object references directly to `b` and `c`, and inquires about their relationship. In other words, our `isRelatedTo(..)` utility above is built-in to the language, and it's called `isPrototypeOf(..)`.
+
+We can also directly retrieve the `[[Prototype]]` of an object. As of ES5, the standard way to do this is:
+
+```js
+Object.getPrototypeOf( a );
+```
+
+And you'll notice that object reference is what we'd expect:
+
+```js
+Object.getPrototypeOf( a ) === Foo.prototype; // true
+```
+
+Most browsers (not all!) have also long supported a non-standard alternate way of accessing the internal `[[Prototype]]`:
+
+```js
+a.__proto__ === Foo.prototype; // true
+```
+
+The strange `.__proto__` (not standardized until ES6!) property "magically" retrieves the internal `[[Prototype]]` of an object as a reference, which is quite helpful if you want to directly inspect (or even traverse: `.__proto__.__proto__...`) the chain.
+
+Just as we saw earlier with `.constructor`, `.__proto__` doesn't actually exist on the object you're inspecting (`a` in our running example). In fact, it exists (non-enumerable; see Chapter 2) on the built-in `Object.prototype`, along with the other common utilities (`.toString()`, `.isPrototypeOf(..)`, etc).
+
+Moreover, `.__proto__` looks like a property, but it's actually more appropriate to think of it as a getter/setter (see Chapter 3).
+
+Roughly, we could envision `.__proto__` implemented (see Chapter 3 for object property definitions) like this:
+
+```js
+Object.defineProperty( Object.prototype, "__proto__", {
+	get: function() {
+		return Object.getPrototypeOf( this );
+	},
+	set: function(o) {
+		// setPrototypeOf(..) as of ES6
+		Object.setPrototypeOf( this, o );
+		return o;
+	}
+} );
+```
+
+So, when we access (retrieve the value of) `a.__proto__`, it's like calling `a.__proto__()` (calling the getter function). *That* function call has `a` as its `this` even though the getter function exists on the `Object.prototype` object (see Chapter 2 for `this` binding rules), so it's just like saying `Object.getPrototypeOf( a )`.
+
+`.__proto__` is also a settable property, just like using ES6's `Object.setPrototypeOf(..)` shown earlier. However, generally you **should not change the `[[Prototype]]` of an existing object**.
+
+There are some very complex, advanced techniques used deep in some frameworks that allow tricks like "subclassing" an `Array`, but this is commonly frowned on in general programming practice, as it usually leads to *much* harder to understand/maintain code.
+
+**Note:** As of ES6, the `class` keyword will allow something that approximates "subclassing" of built-in's like `Array`. See Appendix A for discussion of the `class` syntax added in ES6.
+
+The only other narrow exception (as mentioned earlier) would be setting the `[[Prototype]]` of a default function's `.prototype` object to reference some other object (besides `Object.prototype`). That would avoid replacing that default object entirely with a new linked object. Otherwise, **it's best to treat object `[[Prototype]]` linkage as a read-only characteristic** for ease of reading your code later.
+
+**Note:** The JavaScript community unofficially coined a term for the double-underscore, specifically the leading one in properties like `__proto__`: "dunder". So, the "cool kids" in JavaScript would generally pronounce `__proto__` as "dunder proto".
+
+## Object Links
+
+As we've now seen, the `[[Prototype]]` mechanism is an internal link that exists on one object which references some other object.
+
+This linkage is (primarily) exercised when a property/method reference is made against the first object, and no such property/method exists. In that case, the `[[Prototype]]` linkage tells the engine to look for the property/method on the linked-to object. In turn, if that object cannot fulfill the look-up, its `[[Prototype]]` is followed, and so on. This series of links between objects forms what is called the "prototype chain".
+
+### `Create()`ing Links
+
+We've thoroughly debunked why JavaScript's `[[Prototype]]` mechanism is **not** like *classes*, and we've seen how it instead creates **links** between proper objects.
+
+What's the point of the `[[Prototype]]` mechanism? Why is it so common for JS developers to go to so much effort (emulating classes) in their code to wire up these linkages?
+
+Remember we said much earlier in this chapter that `Object.create(..)` would be a hero? Now, we're ready to see how.
+
+```js
+var foo = {
+	something: function() {
+		console.log( "Tell me something good..." );
+	}
+};
+
+var bar = Object.create( foo );
+
+bar.something(); // Tell me something good...
+```
+
+`Object.create(..)` creates a new object (`bar`) linked to the object we specified (`foo`), which gives us all the power (delegation) of the `[[Prototype]]` mechanism, but without any of the unnecessary complication of `new` functions acting as classes and constructor calls, confusing `.prototype` and `.constructor` references, or any of that extra stuff.
+
+**Note:** `Object.create(null)` creates an object that has an empty (aka, `null`) `[[Prototype]]` linkage, and thus the object can't delegate anywhere. Since such an object has no prototype chain, the `instanceof` operator (explained earlier) has nothing to check, so it will always return `false`. These special empty-`[[Prototype]]` objects are often called "dictionaries" as they are typically used purely for storing data in properties, mostly because they have no possible surprise effects from any delegated properties/functions on the `[[Prototype]]` chain, and are thus purely flat data storage.
+
+We don't *need* classes to create meaningful relationships between two objects. The only thing we should **really care about** is objects linked together for delegation, and `Object.create(..)` gives us that linkage without all the class cruft.
+
+#### `Object.create()` Polyfilled
+
+`Object.create(..)` was added in ES5. You may need to support pre-ES5 environments (like older IE's), so let's take a look at a simple **partial** polyfill for `Object.create(..)` that gives us the capability that we need even in those older JS environments:
+
+```js
+if (!Object.create) {
+	Object.create = function(o) {
+		function F(){}
+		F.prototype = o;
+		return new F();
+	};
+}
+```
+
+This polyfill works by using a throw-away `F` function and overriding its `.prototype` property to point to the object we want to link to. Then we use `new F()` construction to make a new object that will be linked as we specified.
+
+This usage of `Object.create(..)` is by far the most common usage, because it's the part that *can be* polyfilled. There's an additional set of functionality that the standard ES5 built-in `Object.create(..)` provides, which is **not polyfillable** for pre-ES5. As such, this capability is far-less commonly used. For completeness sake, let's look at that additional functionality:
+
+```js
+var anotherObject = {
+	a: 2
+};
+
+var myObject = Object.create( anotherObject, {
+	b: {
+		enumerable: false,
+		writable: true,
+		configurable: false,
+		value: 3
+	},
+	c: {
+		enumerable: true,
+		writable: false,
+		configurable: false,
+		value: 4
+	}
+} );
+
+myObject.hasOwnProperty( "a" ); // false
+myObject.hasOwnProperty( "b" ); // true
+myObject.hasOwnProperty( "c" ); // true
+
+myObject.a; // 2
+myObject.b; // 3
+myObject.c; // 4
+```
+
+The second argument to `Object.create(..)` specifies property names to add to the newly created object, via declaring each new property's *property descriptor* (see Chapter 3). Because polyfilling property descriptors into pre-ES5 is not possible, this additional functionality on `Object.create(..)` also cannot be polyfilled.
+
+The vast majority of usage of `Object.create(..)` uses the polyfill-safe subset of functionality, so most developers are fine with using the **partial polyfill** in pre-ES5 environments.
+
+Some developers take a much stricter view, which is that no function should be polyfilled unless it can be *fully* polyfilled. Since `Object.create(..)` is one of those partial-polyfill'able utilities, this narrower perspective says that if you need to use any of the functionality of `Object.create(..)` in a pre-ES5 environment, instead of polyfilling, you should use a custom utility, and stay away from using the name `Object.create` entirely. You could instead define your own utility, like:
+
+```js
+function createAndLinkObject(o) {
+	function F(){}
+	F.prototype = o;
+	return new F();
+}
+
+var anotherObject = {
+	a: 2
+};
+
+var myObject = createAndLinkObject( anotherObject );
+
+myObject.a; // 2
+```
+
+I do not share this strict opinion. I fully endorse the common partial-polyfill of `Object.create(..)` as shown above, and using it in your code even in pre-ES5. I'll leave it to you to make your own decision.
+
+### Links As Fallbacks?
+
+It may be tempting to think that these links between objects *primarily* provide a sort of fallback for "missing" properties or methods. While that may be an observed outcome, I don't think it represents the right way of thinking about `[[Prototype]]`.
+
+Consider:
+
+```js
+var anotherObject = {
+	cool: function() {
+		console.log( "cool!" );
+	}
+};
+
+var myObject = Object.create( anotherObject );
+
+myObject.cool(); // "cool!"
+```
+
+That code will work by virtue of `[[Prototype]]`, but if you wrote it that way so that `anotherObject` was acting as a fallback **just in case** `myObject` couldn't handle some property/method that some developer may try to call, odds are that your software is going to be a bit more "magical" and harder to understand and maintain.
+
+That's not to say there aren't cases where fallbacks are an appropriate design pattern, but it's not very common or idiomatic in JS, so if you find yourself doing so, you might want to take a step back and reconsider if that's really appropriate and sensible design.
+
+**Note:** In ES6, an advanced functionality called `Proxy` is introduced which can provide something of a "method not found" type of behavior. `Proxy` is beyond the scope of this book, but will be covered in detail in a later book in the *"You Don't Know JS"* series.
+
+**Don't miss an important but nuanced point here.**
+
+Designing software where you intend for a developer to, for instance, call `myObject.cool()` and have that work even though there is no `cool()` method on `myObject` introduces some "magic" into your API design that can be surprising for future developers who maintain your software.
+
+You can however design your API with less "magic" to it, but still take advantage of the power of `[[Prototype]]` linkage.
+
+```js
+var anotherObject = {
+	cool: function() {
+		console.log( "cool!" );
+	}
+};
+
+var myObject = Object.create( anotherObject );
+
+myObject.doCool = function() {
+	this.cool(); // internal delegation!
+};
+
+myObject.doCool(); // "cool!"
+```
+
+Here, we call `myObject.doCool()`, which is a method that *actually exists* on `myObject`, making our API design more explicit (less "magical"). *Internally*, our implementation follows the **delegation design pattern** (see Chapter 6), taking advantage of `[[Prototype]]` delegation to `anotherObject.cool()`.
+
+In other words, delegation will tend to be less surprising/confusing if it's an internal implementation detail rather than plainly exposed in your API interface design. We will expound on **delegation** in great detail in the next chapter.
 
 ## Review (TL;DR)
 
-Closure seems to the un-enlightened like a mystical world set apart inside of JavaScript which only the few bravest souls can reach. But it's actually just a standard and almost obvious fact of how we write code in a lexically scoped environment, where functions are values and can be passed around at will.
+When attempting a property access on an object that doesn't have that property, the object's internal `[[Prototype]]` linkage defines where the `[[Get]]` operation (see Chapter 3) should look next. This cascading linkage from object to object essentially defines a "prototype chain" (somewhat similar to a nested scope chain) of objects to traverse for property resolution.
 
-**Closure is when a function can remember and access its lexical scope even when it's invoked outside its lexical scope.**
+All normal objects have the built-in `Object.prototype` as the top of the prototype chain (like the global scope in scope look-up), where property resolution will stop if not found anywhere prior in the chain. `toString()`, `valueOf()`, and several other common utilities exist on this `Object.prototype` object, explaining how all objects in the language are able to access them.
 
-Closures can trip us up, for instance with loops, if we're not careful to recognize them and how they work. But they are also an immensely powerful tool, enabling patterns like *modules* in their various forms.
+The most common way to get two objects linked to each other is using the `new` keyword with a function call, which among its four steps (see Chapter 2), it creates a new object linked to another object.
 
-Modules require two key characteristics: 1) an outer wrapping function being invoked, to create the enclosing scope 2) the return value of the wrapping function must include reference to at least one inner function that then has closure over the private inner scope of the wrapper.
+The "another object" that the new object is linked to happens to be the object referenced by the arbitrarily named `.prototype` property of the function called with `new`. Functions called with `new` are often called "constructors", despite the fact that they are not actually instantiating a class as *constructors* do in traditional class-oriented languages.
 
-Now we can see closures all around our existing code, and we have the ability to recognize and leverage them to our own benefit!
+While these JavaScript mechanisms can seem to resemble "class instantiation" and "class inheritance" from traditional class-oriented languages, the key distinction is that in JavaScript, no copies are made. Rather, objects end up linked to each other via an internal `[[Prototype]]` chain.
+
+For a variety of reasons, not the least of which is terminology precedent, "inheritance" (and "prototypal inheritance") and all the other OO terms just do not make sense when considering how JavaScript *actually* works (not just applied to our forced mental models).
+
+Instead, "delegation" is a more appropriate term, because these relationships are not *copies* but delegation **links**.
