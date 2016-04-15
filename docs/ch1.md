@@ -1,281 +1,300 @@
-# You Don't Know JS: *this* & Object Prototypes
-# Chapter 1: `this` Or That?
+# You Don't Know JS: Types & Grammar
+# Chapter 1: Types
 
-One of the most confused mechanisms in JavaScript is the `this` keyword. It's a special identifier keyword that's automatically defined in the scope of every function, but what exactly it refers to bedevils even seasoned JavaScript developers.
+Most developers would say that a dynamic language (like JS) does not have *types*. Let's see what the ES5.1 specification (http://www.ecma-international.org/ecma-262/5.1/) has to say on the topic:
 
-> Any sufficiently *advanced* technology is indistinguishable from magic. -- Arthur C. Clarke
+> Algorithms within this specification manipulate values each of which has an associated type. The possible value types are exactly those defined in this clause. Types are further sub classified into ECMAScript language types and specification types.
+>
+> An ECMAScript language type corresponds to values that are directly manipulated by an ECMAScript programmer using the ECMAScript language. The ECMAScript language types are Undefined, Null, Boolean, String, Number, and Object.
 
-JavaScript's `this` mechanism isn't actually *that* advanced, but developers often paraphrase that quote in their own mind by inserting "complex" or "confusing", and there's no question that without lack of clear understanding, `this` can seem downright magical in *your* confusion.
+Now, if you're a fan of strongly typed (statically typed) languages, you may object to this usage of the word "type." In those languages, "type" means a whole lot *more* than it does here in JS.
 
-**Note:** The word "this" is a terribly common pronoun in general discourse. So, it can be very difficult, especially verbally, to determine whether we are using "this" as a pronoun or using it to refer to the actual keyword identifier. For clarity, I will always use `this` to refer to the special keyword, and "this" or *this* or this otherwise.
+Some people say JS shouldn't claim to have "types," and they should instead be called "tags" or perhaps "subtypes".
 
-## Why `this`?
+Bah! We're going to use this rough definition (the same one that seems to drive the wording of the spec): a *type* is an intrinsic, built-in set of characteristics that uniquely identifies the behavior of a particular value and distinguishes it from other values, both to the engine **and to the developer**.
 
-If the `this` mechanism is so confusing, even to seasoned JavaScript developers, one may wonder why it's even useful? Is it more trouble than it's worth? Before we jump into the *how*, we should examine the *why*.
+In other words, if both the engine and the developer treat value `42` (the number) differently than they treat value `"42"` (the string), then those two values have different *types* -- `number` and `string`, respectively. When you use `42`, you are *intending* to do something numeric, like math. But when you use `"42"`, you are *intending* to do something string'ish, like outputting to the page, etc. **These two values have different types.**
 
-Let's try to illustrate the motivation and utility of `this`:
+That's by no means a perfect definition. But it's good enough for this discussion. And it's consistent with how JS describes itself.
+
+# A Type By Any Other Name...
+
+Beyond academic definition disagreements, why does it matter if JavaScript has *types* or not?
+
+Having a proper understanding of each *type* and its intrinsic behavior is absolutely essential to understanding how to properly and accurately convert values to different types (see Coercion, Chapter 4). Nearly every JS program ever written will need to handle value coercion in some shape or form, so it's important you do so responsibly and with confidence.
+
+If you have the `number` value `42`, but you want to treat it like a `string`, such as pulling out the `"2"` as a character in position `1`, you obviously must first convert (coerce) the value from `number` to `string`.
+
+That seems simple enough.
+
+But there are many different ways that such coercion can happen. Some of these ways are explicit, easy to reason about, and reliable. But if you're not careful, coercion can happen in very strange and surprising ways.
+
+Coercion confusion is perhaps one of the most profound frustrations for JavaScript developers. It has often been criticized as being so *dangerous* as to be considered a flaw in the design of the language, to be shunned and avoided.
+
+Armed with a full understanding of JavaScript types, we're aiming to illustrate why coercion's *bad reputation* is largely overhyped and somewhat undeserved -- to flip your perspective, to seeing coercion's power and usefulness. But first, we have to get a much better grip on values and types.
+
+## Built-in Types
+
+JavaScript defines seven built-in types:
+
+* `null`
+* `undefined`
+* `boolean`
+* `number`
+* `string`
+* `object`
+* `symbol` -- added in ES6!
+
+**Note:** All of these types except `object` are called "primitives".
+
+The `typeof` operator inspects the type of the given value, and always returns one of seven string values -- surprisingly, there's not an exact 1-to-1 match with the seven built-in types we just listed.
 
 ```js
-function identify() {
-	return this.name.toUpperCase();
-}
+typeof undefined     === "undefined"; // true
+typeof true          === "boolean";   // true
+typeof 42            === "number";    // true
+typeof "42"          === "string";    // true
+typeof { life: 42 }  === "object";    // true
 
-function speak() {
-	var greeting = "Hello, I'm " + identify.call( this );
-	console.log( greeting );
-}
-
-var me = {
-	name: "Kyle"
-};
-
-var you = {
-	name: "Reader"
-};
-
-identify.call( me ); // KYLE
-identify.call( you ); // READER
-
-speak.call( me ); // Hello, I'm KYLE
-speak.call( you ); // Hello, I'm READER
+// added in ES6!
+typeof Symbol()      === "symbol";    // true
 ```
 
-If the *how* of this snippet confuses you, don't worry! We'll get to that shortly. Just set those questions aside briefly so we can look into the *why* more clearly.
+These six listed types have values of the corresponding type and return a string value of the same name, as shown. `Symbol` is a new data type as of ES6, and will be covered in Chapter 3.
 
-This code snippet allows the `identify()` and `speak()` functions to be re-used against multiple *context* (`me` and `you`) objects, rather than needing a separate version of the function for each object.
-
-Instead of relying on `this`, you could have explicitly passed in a context object to both `identify()` and `speak()`.
+As you may have noticed, I excluded `null` from the above listing. It's *special* -- special in the sense that it's buggy when combined with the `typeof` operator:
 
 ```js
-function identify(context) {
-	return context.name.toUpperCase();
-}
-
-function speak(context) {
-	var greeting = "Hello, I'm " + identify( context );
-	console.log( greeting );
-}
-
-identify( you ); // READER
-speak( me ); // Hello, I'm KYLE
+typeof null === "object"; // true
 ```
 
-However, the `this` mechanism provides a more elegant way of implicitly "passing along" an object reference, leading to cleaner API design and easier re-use.
+It would have been nice (and correct!) if it returned `"null"`, but this original bug in JS has persisted for nearly two decades, and will likely never be fixed because there's too much existing web content that relies on its buggy behavior that "fixing" the bug would *create* more "bugs" and break a lot of web software.
 
-The more complex your usage pattern is, the more clearly you'll see that passing context around as an explicit parameter is often messier than passing around a `this` context. When we explore objects and prototypes, you will see the helpfulness of a collection of functions being able to automatically reference the proper context object.
-
-## Confusions
-
-We'll soon begin to explain how `this` *actually* works, but first we must  dispel some misconceptions about how it *doesn't* actually work.
-
-The name "this" creates confusion when developers try to think about it too literally. There are two meanings often assumed, but both are incorrect.
-
-### Itself
-
-The first common temptation is to assume `this` refers to the function itself. That's a reasonable grammatical inference, at least.
-
-Why would you want to refer to a function from inside itself? The most common reasons would be things like recursion (calling a function from inside itself) or having an event handler that can unbind itself when it's first called.
-
-Developers new to JS's mechanisms often think that referencing the function as an object (all functions in JavaScript are objects!) lets you store *state* (values in properties) between function calls. While this is certainly possible and has some limited uses, the rest of the book will expound on many other patterns for *better* places to store state besides the function object.
-
-But for just a moment, we'll explore that pattern, to illustrate how `this` doesn't let a function get a reference to itself like we might have assumed.
-
-Consider the following code, where we attempt to track how many times a function (`foo`) was called:
+If you want to test for a `null` value using its type, you need a compound condition:
 
 ```js
-function foo(num) {
-	console.log( "foo: " + num );
+var a = null;
 
-	// keep track of how many times `foo` is called
-	this.count++;
+(!a && typeof a === "object"); // true
+```
+
+`null` is the only primitive value that is "falsy" (aka false-like; see Chapter 4) but that also returns `"object"` from the `typeof` check.
+
+So what's the seventh string value that `typeof` can return?
+
+```js
+typeof function a(){ /* .. */ } === "function"; // true
+```
+
+It's easy to think that `function` would be a top-level built-in type in JS, especially given this behavior of the `typeof` operator. However, if you read the spec, you'll see it's actually a "subtype" of object. Specifically, a function is referred to as a "callable object" -- an object that has an internal `[[Call]]` property that allows it to be invoked.
+
+The fact that functions are actually objects is quite useful. Most importantly, they can have properties. For example:
+
+```js
+function a(b,c) {
+	/* .. */
+}
+```
+
+The function object has a `length` property set to the number of formal parameters it is declared with.
+
+```js
+a.length; // 2
+```
+
+Since you declared the function with two formal named parameters (`b` and `c`), the "length of the function" is `2`.
+
+What about arrays? They're native to JS, so are they a special type?
+
+```js
+typeof [1,2,3] === "object"; // true
+```
+
+Nope, just objects. It's most appropriate to think of them also as a "subtype" of object (see Chapter 3), in this case with the additional characteristics of being numerically indexed (as opposed to just being string-keyed like plain objects) and maintaining an automatically updated `.length` property.
+
+## Values as Types
+
+In JavaScript, variables don't have types -- **values have types**. Variables can hold any value, at any time.
+
+Another way to think about JS types is that JS doesn't have "type enforcement," in that the engine doesn't insist that a *variable* always holds values of the *same initial type* that it starts out with. A variable can, in one assignment statement, hold a `string`, and in the next hold a `number`, and so on.
+
+The *value* `42` has an intrinsic type of `number`, and its *type* cannot be changed. Another value, like `"42"` with the `string` type, can be created *from* the `number` value `42` through a process called **coercion** (see Chapter 4).
+
+If you use `typeof` against a variable, it's not asking "what's the type of the variable?" as it may seem, since JS variables have no types. Instead, it's asking "what's the type of the value *in* the variable?"
+
+```js
+var a = 42;
+typeof a; // "number"
+
+a = true;
+typeof a; // "boolean"
+```
+
+The `typeof` operator always returns a string. So:
+
+```js
+typeof typeof 42; // "string"
+```
+
+The first `typeof 42` returns `"number"`, and `typeof "number"` is `"string"`.
+
+### `undefined` vs "undeclared"
+
+Variables that have no value *currently*, actually have the `undefined` value. Calling `typeof` against such variables will return `"undefined"`:
+
+```js
+var a;
+
+typeof a; // "undefined"
+
+var b = 42;
+var c;
+
+// later
+b = c;
+
+typeof b; // "undefined"
+typeof c; // "undefined"
+```
+
+It's tempting for most developers to think of the word "undefined" and think of it as a synonym for "undeclared." However, in JS, these two concepts are quite different.
+
+An "undefined" variable is one that has been declared in the accessible scope, but *at the moment* has no other value in it. By contrast, an "undeclared" variable is one that has not been formally declared in the accessible scope.
+
+Consider:
+
+```js
+var a;
+
+a; // undefined
+b; // ReferenceError: b is not defined
+```
+
+An annoying confusion is the error message that browsers assign to this condition. As you can see, the message is "b is not defined," which is of course very easy and reasonable to confuse with "b is undefined." Yet again, "undefined" and "is not defined" are very different things. It'd be nice if the browsers said something like "b is not found" or "b is not declared," to reduce the confusion!
+
+There's also a special behavior associated with `typeof` as it relates to undeclared variables that even further reinforces the confusion. Consider:
+
+```js
+var a;
+
+typeof a; // "undefined"
+
+typeof b; // "undefined"
+```
+
+The `typeof` operator returns `"undefined"` even for "undeclared" (or "not defined") variables. Notice that there was no error thrown when we executed `typeof b`, even though `b` is an undeclared variable. This is a special safety guard in the behavior of `typeof`.
+
+Similar to above, it would have been nice if `typeof` used with an undeclared variable returned "undeclared" instead of conflating the result value with the different "undefined" case.
+
+### `typeof` Undeclared
+
+Nevertheless, this safety guard is a useful feature when dealing with JavaScript in the browser, where multiple script files can load variables into the shared global namespace.
+
+**Note:** Many developers believe there should never be any variables in the global namespace, and that everything should be contained in modules and private/separate namespaces. This is great in theory but nearly impossible in practicality; still it's a good goal to strive toward! Fortunately, ES6 added first-class support for modules, which will eventually make that much more practical.
+
+As a simple example, imagine having a "debug mode" in your program that is controlled by a global variable (flag) called `DEBUG`. You'd want to check if that variable was declared before performing a debug task like logging a message to the console. A top-level global `var DEBUG = true` declaration would only be included in a "debug.js" file, which you only load into the browser when you're in development/testing, but not in production.
+
+However, you have to take care in how you check for the global `DEBUG` variable in the rest of your application code, so that you don't throw a `ReferenceError`. The safety guard on `typeof` is our friend in this case.
+
+```js
+// oops, this would throw an error!
+if (DEBUG) {
+	console.log( "Debugging is starting" );
 }
 
-foo.count = 0;
+// this is a safe existence check
+if (typeof DEBUG !== "undefined") {
+	console.log( "Debugging is starting" );
+}
+```
 
-var i;
+This sort of check is useful even if you're not dealing with user-defined variables (like `DEBUG`). If you are doing a feature check for a built-in API, you may also find it helpful to check without throwing an error:
 
-for (i=0; i<10; i++) {
-	if (i > 5) {
-		foo( i );
+```js
+if (typeof atob === "undefined") {
+	atob = function() { /*..*/ };
+}
+```
+
+**Note:** If you're defining a "polyfill" for a feature if it doesn't already exist, you probably want to avoid using `var` to make the `atob` declaration. If you declare `var atob` inside the `if` statement, this declaration is hoisted (see the *Scope & Closures* title of this series) to the top of the scope, even if the `if` condition doesn't pass (because the global `atob` already exists!). In some browsers and for some special types of global built-in variables (often called "host objects"), this duplicate declaration may throw an error. Omitting the `var` prevents this hoisted declaration.
+
+Another way of doing these checks against global variables but without the safety guard feature of `typeof` is to observe that all global variables are also properties of the global object, which in the browser is basically the `window` object. So, the above checks could have been done (quite safely) as:
+
+```js
+if (window.DEBUG) {
+	// ..
+}
+
+if (!window.atob) {
+	// ..
+}
+```
+
+Unlike referencing undeclared variables, there is no `ReferenceError` thrown if you try to access an object property (even on the global `window` object) that doesn't exist.
+
+On the other hand, manually referencing the global variable with a `window` reference is something some developers prefer to avoid, especially if your code needs to run in multiple JS environments (not just browsers, but server-side node.js, for instance), where the global variable may not always be called `window`.
+
+Technically, this safety guard on `typeof` is useful even if you're not using global variables, though these circumstances are less common, and some developers may find this design approach less desirable. Imagine a utility function that you want others to copy-and-paste into their programs or modules, in which you want to check to see if the including program has defined a certain variable (so that you can use it) or not:
+
+```js
+function doSomethingCool() {
+	var helper =
+		(typeof FeatureXYZ !== "undefined") ?
+		FeatureXYZ :
+		function() { /*.. default feature ..*/ };
+
+	var val = helper();
+	// ..
+}
+```
+
+`doSomethingCool()` tests for a variable called `FeatureXYZ`, and if found, uses it, but if not, uses its own. Now, if someone includes this utility in their module/program, it safely checks if they've defined `FeatureXYZ` or not:
+
+```js
+// an IIFE (see "Immediately Invoked Function Expressions"
+// discussion in the *Scope & Closures* title of this series)
+(function(){
+	function FeatureXYZ() { /*.. my XYZ feature ..*/ }
+
+	// include `doSomethingCool(..)`
+	function doSomethingCool() {
+		var helper =
+			(typeof FeatureXYZ !== "undefined") ?
+			FeatureXYZ :
+			function() { /*.. default feature ..*/ };
+
+		var val = helper();
+		// ..
 	}
-}
-// foo: 6
-// foo: 7
-// foo: 8
-// foo: 9
 
-// how many times was `foo` called?
-console.log( foo.count ); // 0 -- WTF?
+	doSomethingCool();
+})();
 ```
 
-`foo.count` is *still* `0`, even though the four `console.log` statements clearly indicate `foo(..)` was in fact called four times. The frustration stems from a *too literal* interpretation of what `this` (in `this.count++`) means.
+Here, `FeatureXYZ` is not at all a global variable, but we're still using the safety guard of `typeof` to make it safe to check for. And importantly, here there is *no* object we can use (like we did for global variables with `window.___`) to make the check, so `typeof` is quite helpful.
 
-When the code executes `foo.count = 0`, indeed it's adding a property `count` to the function object `foo`. But for the `this.count` reference inside of the function, `this` is not in fact pointing *at all* to that function object, and so even though the property names are the same, the root objects are different, and confusion ensues.
-
-**Note:** A responsible developer *should* ask at this point, "If I was incrementing a `count` property but it wasn't the one I expected, which `count` *was* I incrementing?" In fact, were she to dig deeper, she would find that she had accidentally created a global variable `count` (see Chapter 2 for *how* that happened!), and it currently has the value `NaN`. Of course, once she identifies this peculiar outcome, she then has a whole other set of questions: "How was it global, and why did it end up `NaN` instead of some proper count value?" (see Chapter 2).
-
-Instead of stopping at this point and digging into why the `this` reference doesn't seem to be behaving as *expected*, and answering those tough but important questions, many developers simply avoid the issue altogether, and hack toward some other solution, such as creating another object to hold the `count` property:
+Other developers would prefer a design pattern called "dependency injection," where instead of `doSomethingCool()` inspecting implicitly for `FeatureXYZ` to be defined outside/around it, it would need to have the dependency explicitly passed in, like:
 
 ```js
-function foo(num) {
-	console.log( "foo: " + num );
+function doSomethingCool(FeatureXYZ) {
+	var helper = FeatureXYZ ||
+		function() { /*.. default feature ..*/ };
 
-	// keep track of how many times `foo` is called
-	data.count++;
+	var val = helper();
+	// ..
 }
-
-var data = {
-	count: 0
-};
-
-var i;
-
-for (i=0; i<10; i++) {
-	if (i > 5) {
-		foo( i );
-	}
-}
-// foo: 6
-// foo: 7
-// foo: 8
-// foo: 9
-
-// how many times was `foo` called?
-console.log( data.count ); // 4
 ```
 
-While it is true that this approach "solves" the problem, unfortunately it simply ignores the real problem -- lack of understanding what `this` means and how it works -- and instead falls back to the comfort zone of a more familiar mechanism: lexical scope.
+There are lots of options when designing such functionality. No one pattern here is "correct" or "wrong" -- there are various tradeoffs to each approach. But overall, it's nice that the `typeof` undeclared safety guard gives us more options.
 
-**Note:** Lexical scope is a perfectly fine and useful mechanism; I am not belittling the use of it, by any means (see *"Scope & Closures"* title of this book series). But constantly *guessing* at how to use `this`, and usually being *wrong*, is not a good reason to retreat back to lexical scope and never learn *why* `this` eludes you.
+## Review
 
-To reference a function object from inside itself, `this` by itself will typically be insufficient. You generally need a reference to the function object via a lexical identifier (variable) that points at it.
+JavaScript has seven built-in *types*: `null`, `undefined`,  `boolean`, `number`, `string`, `object`, `symbol`. They can be identified by the `typeof` operator.
 
-Consider these two functions:
+Variables don't have types, but the values in them do. These types define intrinsic behavior of the values.
 
-```js
-function foo() {
-	foo.count = 4; // `foo` refers to itself
-}
+Many developers will assume "undefined" and "undeclared" are roughly the same thing, but in JavaScript, they're quite different. `undefined` is a value that a declared variable can hold. "Undeclared" means a variable has never been declared.
 
-setTimeout( function(){
-	// anonymous function (no name), cannot
-	// refer to itself
-}, 10 );
-```
+JavaScript unfortunately kind of conflates these two terms, not only in its error messages ("ReferenceError: a is not defined") but also in the return values of `typeof`, which is `"undefined"` for both cases.
 
-In the first function, called a "named function", `foo` is a reference that can be used to refer to the function from inside itself.
-
-But in the second example, the function callback passed to `setTimeout(..)` has no name identifier (so called an "anonymous function"), so there's no proper way to refer to the function object itself.
-
-**Note:** The old-school but now deprecated and frowned-upon `arguments.callee` reference inside a function *also* points to the function object of the currently executing function. This reference is typically the only way to access an anonymous function's object from inside itself. The best approach, however, is to avoid the use of anonymous functions altogether, at least for those which require a self-reference, and instead use a named function (expression). `arguments.callee` is deprecated and should not be used.
-
-So another solution to our running example would have been to use the `foo` identifier as a function object reference in each place, and not use `this` at all, which *works*:
-
-```js
-function foo(num) {
-	console.log( "foo: " + num );
-
-	// keep track of how many times `foo` is called
-	foo.count++;
-}
-
-foo.count = 0;
-
-var i;
-
-for (i=0; i<10; i++) {
-	if (i > 5) {
-		foo( i );
-	}
-}
-// foo: 6
-// foo: 7
-// foo: 8
-// foo: 9
-
-// how many times was `foo` called?
-console.log( foo.count ); // 4
-```
-
-However, that approach similarly side-steps *actual* understanding of `this` and relies entirely on the lexical scoping of variable `foo`.
-
-Yet another way of approaching the issue is to force `this` to actually point at the `foo` function object:
-
-```js
-function foo(num) {
-	console.log( "foo: " + num );
-
-	// keep track of how many times `foo` is called
-	// Note: `this` IS actually `foo` now, based on
-	// how `foo` is called (see below)
-	this.count++;
-}
-
-foo.count = 0;
-
-var i;
-
-for (i=0; i<10; i++) {
-	if (i > 5) {
-		// using `call(..)`, we ensure the `this`
-		// points at the function object (`foo`) itself
-		foo.call( foo, i );
-	}
-}
-// foo: 6
-// foo: 7
-// foo: 8
-// foo: 9
-
-// how many times was `foo` called?
-console.log( foo.count ); // 4
-```
-
-**Instead of avoiding `this`, we embrace it.** We'll explain in a little bit *how* such techniques work much more completely, so don't worry if you're still a bit confused!
-
-### Its Scope
-
-The next most common misconception about the meaning of `this` is that it somehow refers to the function's scope. It's a tricky question, because in one sense there is some truth, but in the other sense, it's quite misguided.
-
-To be clear, `this` does not, in any way, refer to a function's **lexical scope**. It is true that internally, scope is kind of like an object with properties for each of the available identifiers. But the scope "object" is not accessible to JavaScript code. It's an inner part of the *Engine*'s implementation.
-
-Consider code which attempts (and fails!) to cross over the boundary and use `this` to implicitly refer to a function's lexical scope:
-
-```js
-function foo() {
-	var a = 2;
-	this.bar();
-}
-
-function bar() {
-	console.log( this.a );
-}
-
-foo(); //undefined
-```
-
-There's more than one mistake in this snippet. While it may seem contrived, the code you see is a distillation of actual real-world code that has been exchanged in public community help forums. It's a wonderful (if not sad) illustration of just how misguided `this` assumptions can be.
-
-Firstly, an attempt is made to reference the `bar()` function via `this.bar()`. It is almost certainly an *accident* that it works, but we'll explain the *how* of that shortly. The most natural way to have invoked `bar()` would have been to omit the leading `this.` and just make a lexical reference to the identifier.
-
-However, the developer who writes such code is attempting to use `this` to create a bridge between the lexical scopes of `foo()` and `bar()`, so that `bar()` has access to the variable `a` in the inner scope of `foo()`. **No such bridge is possible.** You cannot use a `this` reference to look something up in a lexical scope. It is not possible.
-
-Every time you feel yourself trying to mix lexical scope look-ups with `this`, remind yourself: *there is no bridge*.
-
-## What's `this`?
-
-Having set aside various incorrect assumptions, let us now turn our attention to how the `this` mechanism really works.
-
-We said earlier that `this` is not an author-time binding but a runtime binding. It is contextual based on the conditions of the function's invocation. `this` binding has nothing to do with where a function is declared, but has instead everything to do with the manner in which the function is called.
-
-When a function is invoked, an activation record, otherwise known as an execution context, is created. This record contains information about where the function was called from (the call-stack), *how* the function was invoked, what parameters were passed, etc. One of the properties of this record is the `this` reference which will be used for the duration of that function's execution.
-
-In the next chapter, we will learn to find a function's **call-site** to determine how its execution will bind `this`.
-
-## Review (TL;DR)
-
-`this` binding is a constant source of confusion for the JavaScript developer who does not take the time to learn how the mechanism actually works. Guesses, trial-and-error, and blind copy-n-paste from Stack Overflow answers is not an effective or proper way to leverage *this* important `this` mechanism.
-
-To learn `this`, you first have to learn what `this` is *not*, despite any assumptions or misconceptions that may lead you down those paths. `this` is neither a reference to the function itself, nor is it a reference to the function's *lexical* scope.
-
-`this` is actually a binding that is made when a function is invoked, and *what* it references is determined entirely by the call-site where the function is called.
+However, the safety guard (preventing an error) on `typeof` when used against an undeclared variable can be helpful in certain cases.

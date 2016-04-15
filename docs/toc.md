@@ -1,40 +1,39 @@
-# You Don't Know JS: *this* & Object Prototypes
+# You Don't Know JS: Types & Grammar
 
 ## Table of Contents
 
 * Foreword
 * Preface
-* Chapter 1: `this` Or That?
-	* Why `this`?
-	* Confusions
-	* What's `this`?
-* Chapter 2: `this` All Makes Sense Now!
-	* Call-site
-	* Nothing But Rules
-	* Everything In Order
-	* Binding Exceptions
-	* Lexical `this`
-* Chapter 3: Objects
-	* Syntax
-	* Type
-	* Contents
-	* Iteration
-* Chapter 4: Mixing (Up) "Class" Objects
-	* Class Theory
-	* Class Mechanics
-	* Class Inheritance
-	* Mixins
-* Chapter 5: Prototypes
-	* `[[Prototype]]`
-	* "Class"
-	* "(Prototypal) Inheritance"
-	* Object Links
-* Chapter 6: Behavior Delegation
-	* Towards Delegation-Oriented Design
-	* Classes vs. Objects
-	* Simpler Design
-	* Nicer Syntax
-	* Introspection
-* Appendix A: ES6 `class`
+* Chapter 1: Types
+	* A Type By Any Other Name...
+	* Built-in Types
+	* Values as Types
+* Chapter 2: Values
+	* Arrays
+	* Strings
+	* Numbers
+	* Special Values
+	* Value vs Reference
+* Chapter 3: Natives
+	* Internal `[[Class]]`
+	* Boxing Wrappers
+	* Unboxing
+	* Natives as Constructors
+* Chapter 4: Coercion
+	* Converting Values
+	* Abstract Value Operations
+	* Explicit Coercion
+	* Implicit Coercion
+	* Loose Equals vs Strict Equals
+	* Abstract Relational Comparison
+* Chapter 5: Grammar
+	* Statements & Expressions
+	* Operator Precedence
+	* Automatic Semicolons
+	* Errors
+	* Function Arguments
+	* `try..finally`
+	* `switch`
+* Appendix A: Mixed Environment JavaScript
 * Appendix B: Acknowledgments
 

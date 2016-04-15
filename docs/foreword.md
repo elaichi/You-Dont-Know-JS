@@ -1,21 +1,20 @@
-# You Don't Know JS: *this* & Object Prototypes
+# You Don't Know JS: Types & Grammar
 # Foreword
 
-While reading this book in preparation for writing this foreword, I was forced to reflect on how I learned JavaScript and how much it has changed over the last 15 years that I have been programming and developing with it.
+It was once said, "JavaScript is the only language developers don't learn to use before using it."
 
-When I started using JavaScript 15 years ago, the practice of using non-HTML technologies such as CSS and JS in your web pages was called DHTML or Dynamic HTML. Back then, the usefulness of JavaScript varied greatly and seemed to be tilted toward adding animated snowflakes to your web pages or dynamic clocks that told the time in the status bar. Suffice it to say, I didn’t really pay much attention to JavaScript in the early part of my career because of the novelty of the implementations that I often found on the Internet.
+I laugh each time I hear that quote because it was true for me and I suspect it was for many other developers. JavaScript, and maybe even CSS and HTML, were not a core computer science language taught at college in the Internet's early days, so personal development was very much based on the budding developer's search and "view source" abilities to piece together these basic web languages.
 
-It wasn’t until 2005 that I first rediscovered JavaScript as a real programming language that I needed to pay closer attention to. After digging into the first beta release of Google Maps, I was hooked on the potential it had. At the time, Google Maps was a first-of-its-kind application -- it allowed you to move a map around with your mouse, zoom in and out, and make server requests without reloading the page -- all with JavaScript. It seemed like magic!
+I still remember my first high school website project. The task was to create any type of web store, and me being a James Bond fan, I decided to create a Goldeneye store. It had everything: the Goldeneye midi theme song playing in the background, a JavaScript-powered crosshairs following the mouse around the screen, and a gunshot sound that played upon every click. Q would have been proud of this masterpiece of a website.
 
-When anything seems like magic, it is usually a good indication you are at the dawn of a new way of doing things. And boy, was I not wrong -- fast-forwarding to today, I would say that JavaScript is one of the primary languages I use for both client- and server-side programming, and I wouldn’t have it any other way.
+I tell that story because I did back then what many developers are doing today: I copied and pasted chunks of JavaScript code into my project without having a clue what's actually happening. The widespread use of JavaScript toolkits like jQuery have, in their own small way, perpetuated this pattern of nonlearning of core JavaScript.
 
-One of my regrets as I look over the past 15 years is that I didn’t give JavaScript more of a chance before 2005, or more accurately, that I lacked the foresight to see JavaScript as a true programming language that is just as useful as C++, C#, Java, and many others.
+I'm not disparaging JavaScript toolkit use; after all, I'm a member of the MooTools JavaScript team! But the reason JavaScript toolkits are as powerful as they are is because their developers know the fundamentals, and their "gotchas," and apply them magnificently. As useful as these toolkits are, it's still incredibly important to know the basics of the language, and with books like Kyle Simpson's *You Don't Know JS* series, there's no excuse not to learn them.
 
-If I had this *You Don’t Know JS* series of books at the start of my career, my career history would look much different than it does today. And that is one of the things I love about this series: it explains JS at a level that builds your understanding as you go through the series, but in a fun and informative way.
+*Types and Grammar*, the third installment of the series, is an excellent look at the core JavaScript fundamentals that copy and paste and JavaScript toolkits don't and could never teach you. Coercion and its pitfalls, natives as constructors, and the whole gamut of JavaScript basics are thoroughly explained with focused code examples. Like the other books in this series, Kyle cuts straight to the point: no fluff and word-smithing -- exactly the type of tech book I love.
 
-*this & Object Prototypes* is a wonderful continuation to the series. It does a great and natural job of building on the prior book, Scope & Closures, and extending that knowledge to a very important part of the JS language, the `this` keyword and prototypes. These two simple things are pivotal for what you will learn in the future books, because they are foundational to doing real programming with JavaScript. The concept of how to create objects, relate them, and extend them to represent things in your application is necessary to create large and complex applications in JavaScript. And without them, creating complex applications (such as Google Maps) wouldn’t be possible in JavaScript.
+Enjoy Types and Grammar and don't let it get too far away from your desk!
 
-I would say that the vast majority of web developers probably have never built a JavaScript object and just treat the language as event-binding glue between buttons and AJAX requests. I was in that camp at a point in my career, but after I learned how to master prototypes and create objects in JavaScript, a world of possibilities opened up for me. If you fall into the category of just creating event-binding glue code, this book is a must-read; if you just need a refresher, this book will be a go-to resource for you. Either way, you will not be disappointed. Trust me!
-
-Nick Berardi<br>
-[nickberardi.com](http://nickberardi.com), [@nberardi](http://twitter.com/nberardi)
+David Walsh<br>
+[http://davidwalsh.name](http://davidwalsh.name), [@davidwalshblog](http://twitter.com/davidwalshblog)<br>
+Senior Web Developer, Mozilla

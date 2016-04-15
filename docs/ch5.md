@@ -1,752 +1,1387 @@
-# You Don't Know JS: *this* & Object Prototypes
-# Chapter 5: Prototypes
+# You Don't Know JS: Types & Grammar
+# Chapter 5: Grammar
 
-In Chapters 3 and 4, we mentioned the `[[Prototype]]` chain several times, but haven't said what exactly it is. We will now examine prototypes in detail.
+The last major topic we want to tackle is how JavaScript's language syntax works (aka its grammar). You may think you know how to write JS, but there's an awful lot of nuance to various parts of the language grammar that lead to confusion and misconception, so we want to dive into those parts and clear some things up.
 
-**Note:** All of the attempts to emulate class-copy behavior, as described previously in Chapter 4, labeled as variations of "mixins", completely circumvent the `[[Prototype]]` chain mechanism we examine here in this chapter.
+**Note:** The term "grammar" may be a little less familiar to readers than the term "syntax." In many ways, they are similar terms, describing the *rules* for how the language works. There are nuanced differences, but they mostly don't matter for our discussion here. The grammar for JavaScript is a structured way to describe how the syntax (operators, keywords, etc.) fits together into well-formed, valid programs. In other words, discussing syntax without grammar would leave out a lot of the important details. So our focus here in this chapter is most accurately described as *grammar*, even though the raw syntax of the language is what developers directly interact with.
 
-## `[[Prototype]]`
+## Statements & Expressions
 
-Objects in JavaScript have an internal property, denoted in the specification as `[[Prototype]]`, which is simply a reference to another object. Almost all objects are given a non-`null` value for this property, at the time of their creation.
+It's fairly common for developers to assume that the term "statement" and "expression" are roughly equivalent. But here we need to distinguish between the two, because there are some very important differences in our JS programs.
 
-**Note:** We will see shortly that it *is* possible for an object to have an empty `[[Prototype]]` linkage, though this is somewhat less common.
+To draw the distinction, let's borrow from terminology you may be more familiar with: the English language.
+
+A "sentence" is one complete formation of words that expresses a thought. It's comprised of one or more "phrases," each of which can be connected with punctuation marks or conjunction words ("and," "or," etc). A phrase can itself be made up of smaller phrases. Some phrases are incomplete and don't accomplish much by themselves, while other phrases can stand on their own. These rules are collectively called the *grammar* of the English language.
+
+And so it goes with JavaScript grammar. Statements are sentences, expressions are phrases, and operators are conjunctions/punctuation.
+
+Every expression in JS can be evaluated down to a single, specific value result. For example:
+
+```js
+var a = 3 * 6;
+var b = a;
+b;
+```
+
+In this snippet, `3 * 6` is an expression (evaluates to the value `18`). But `a` on the second line is also an expression, as is `b` on the third line. The `a` and `b` expressions both evaluate to the values stored in those variables at that moment, which also happens to be `18`.
+
+Moreover, each of the three lines is a statement containing expressions. `var a = 3 * 6` and `var b = a` are called "declaration statements" because they each declare a variable (and optionally assign a value to it). The `a = 3 * 6` and `b = a` assignments (minus the `var`s) are called assignment expressions.
+
+The third line contains just the expression `b`, but it's also a statement all by itself (though not a terribly interesting one!). This is generally referred to as an "expression statement."
+
+### Statement Completion Values
+
+It's a fairly little known fact that statements all have completion values (even if that value is just `undefined`).
+
+How would you even go about seeing the completion value of a statement?
+
+The most obvious answer is to type the statement into your browser's developer console, because when you execute it, the console by default reports the completion value of the most recent statement it executed.
+
+Let's consider `var b = a`. What's the completion value of that statement?
+
+The `b = a` assignment expression results in the value that was assigned (`18` above), but the `var` statement itself results in `undefined`. Why? Because `var` statements are defined that way in the spec. If you put `var a = 42;` into your console, you'll see `undefined` reported back instead of `42`.
+
+**Note:** Technically, it's a little more complex than that. In the ES5 spec, section 12.2 "Variable Statement," the `VariableDeclaration` algorithm actually *does* return a value (a `string` containing the name of the variable declared -- weird, huh!?), but that value is basically swallowed up (except for use by the `for..in` loop) by the `VariableStatement` algorithm, which forces an empty (aka `undefined`) completion value.
+
+In fact, if you've done much code experimenting in your console (or in a JavaScript environment REPL -- read/evaluate/print/loop tool), you've probably seen `undefined` reported after many different statements, and perhaps never realized why or what that was. Put simply, the console is just reporting the statement's completion value.
+
+But what the console prints out for the completion value isn't something we can use inside our program. So how can we capture the completion value?
+
+That's a much more complicated task. Before we explain *how*, let's explore *why* would you want to do that?
+
+We need to consider other types of statement completion values. For example, any regular `{ .. }` block has a completion value of the completion value of its last contained statement/expression.
 
 Consider:
 
 ```js
-var myObject = {
-	a: 2
+var b;
+
+if (true) {
+	b = 4 + 38;
+}
+```
+
+If you typed that into your console/REPL, you'd probably see `42` reported, since `42` is the completion value of the `if` block, which took on the completion value of its last assignment expression statement `b = 4 + 38`.
+
+In other words, the completion value of a block is like an *implicit return* of the last statement value in the block.
+
+**Note:** This is conceptually familiar in languages like CoffeeScript, which have implicit `return` values from `function`s that are the same as the last statement value in the function.
+
+But there's an obvious problem. This kind of code doesn't work:
+
+```js
+var a, b;
+
+a = if (true) {
+	b = 4 + 38;
 };
-
-myObject.a; // 2
 ```
 
-What is the `[[Prototype]]` reference used for? In Chapter 3, we examined the `[[Get]]` operation that is invoked when you reference a property on an object, such as `myObject.a`. For that default `[[Get]]` operation, the first step is to check if the object itself has a property `a` on it, and if so, it's used.
+We can't capture the completion value of a statement and assign it into another variable in any easy syntactic/grammatical way (at least not yet!).
 
-**Note:** ES6 Proxies are outside of our discussion scope in this book (will be covered in a later book in the series!), but everything we discuss here about normal `[[Get]]` and `[[Put]]` behavior does not apply if a `Proxy` is involved.
+So, what can we do?
 
-But it's what happens if `a` **isn't** present on `myObject` that brings our attention now to the `[[Prototype]]` link of the object.
+**Warning**: For demo purposes only -- don't actually do the following in your real code!
 
-The default `[[Get]]` operation proceeds to follow the `[[Prototype]]` **link** of the object if it cannot find the requested property on the object directly.
+We could use the much maligned `eval(..)` (sometimes pronounced "evil") function to capture this completion value.
 
 ```js
-var anotherObject = {
-	a: 2
-};
+var a, b;
 
-// create an object linked to `anotherObject`
-var myObject = Object.create( anotherObject );
+a = eval( "if (true) { b = 4 + 38; }" );
 
-myObject.a; // 2
+a;	// 42
 ```
 
-**Note:** We will explain what `Object.create(..)` does, and how it operates, shortly. For now, just assume it creates an object with the `[[Prototype]]` linkage we're examining to the object specified.
+Yeeeaaahhhh. That's terribly ugly. But it works! And it illustrates the point that statement completion values are a real thing that can be captured not just in our console but in our programs.
 
-So, we have `myObject` that is now `[[Prototype]]` linked to `anotherObject`. Clearly `myObject.a` doesn't actually exist, but nevertheless, the property access succeeds (being found on `anotherObject` instead) and indeed finds the value `2`.
-
-But, if `a` weren't found on `anotherObject` either, its `[[Prototype]]` chain, if non-empty, is again consulted and followed.
-
-This process continues until either a matching property name is found, or the `[[Prototype]]` chain ends. If no matching property is *ever* found by the end of the chain, the return result from the `[[Get]]` operation is `undefined`.
-
-Similar to this `[[Prototype]]` chain look-up process, if you use a `for..in` loop to iterate over an object, any property that can be reached via its chain (and is also `enumerable` -- see Chapter 3) will be enumerated. If you use the `in` operator to test for the existence of a property on an object, `in` will check the entire chain of the object (regardless of *enumerability*).
+There's a proposal for ES7 called "do expression." Here's how it might work:
 
 ```js
-var anotherObject = {
-	a: 2
-};
-
-// create an object linked to `anotherObject`
-var myObject = Object.create( anotherObject );
-
-for (var k in myObject) {
-	console.log("found: " + k);
-}
-// found: a
-
-("a" in myObject); // true
-```
-
-So, the `[[Prototype]]` chain is consulted, one link at a time, when you perform property look-ups in various fashions. The look-up stops once the property is found or the chain ends.
-
-### `Object.prototype`
-
-But *where* exactly does the `[[Prototype]]` chain "end"?
-
-The top-end of every *normal* `[[Prototype]]` chain is the built-in `Object.prototype`. This object includes a variety of common utilities used all over JS, because all normal (built-in, not host-specific extension) objects in JavaScript "descend from" (aka, have at the top of their `[[Prototype]]` chain) the `Object.prototype` object.
-
-Some utilities found here you may be familiar with include `.toString()` and `.valueOf()`. In Chapter 3, we introduced another: `.hasOwnProperty(..)`. And yet another function on `Object.prototype` you may not be familiar with, but which we'll address later in this chapter, is `.isPrototypeOf(..)`.
-
-### Setting & Shadowing Properties
-
-Back in Chapter 3, we mentioned that setting properties on an object was more nuanced than just adding a new property to the object or changing an existing property's value. We will now revisit this situation more completely.
-
-```js
-myObject.foo = "bar";
-```
-
-If the `myObject` object already has a normal data accessor property called `foo` directly present on it, the assignment is as simple as changing the value of the existing property.
-
-If `foo` is not already present directly on `myObject`, the `[[Prototype]]` chain is traversed, just like for the `[[Get]]` operation. If `foo` is not found anywhere in the chain, the property `foo` is added directly to `myObject` with the specified value, as expected.
-
-However, if `foo` is already present somewhere higher in the chain, nuanced (and perhaps surprising) behavior can occur with the `myObject.foo = "bar"` assignment. We'll examine that more in just a moment.
-
-If the property name `foo` ends up both on `myObject` itself and at a higher level of the `[[Prototype]]` chain that starts at `myObject`, this is called *shadowing*. The `foo` property directly on `myObject` *shadows* any `foo` property which appears higher in the chain, because the `myObject.foo` look-up would always find the `foo` property that's lowest in the chain.
-
-As we just hinted, shadowing `foo` on `myObject` is not as simple as it may seem. We will now examine three scenarios for the `myObject.foo = "bar"` assignment when `foo` is **not** already on `myObject` directly, but **is** at a higher level of `myObject`'s `[[Prototype]]` chain:
-
-1. If a normal data accessor (see Chapter 3) property named `foo` is found anywhere higher on the `[[Prototype]]` chain, **and it's not marked as read-only (`writable:false`)** then a new property called `foo` is added directly to `myObject`, resulting in a **shadowed property**.
-2. If a `foo` is found higher on the `[[Prototype]]` chain, but it's marked as **read-only (`writable:false`)**, then both the setting of that existing property as well as the creation of the shadowed property on `myObject` **are disallowed**. If the code is running in `strict mode`, an error will be thrown. Otherwise, the setting of the property value will silently be ignored. Either way, **no shadowing occurs**.
-3. If a `foo` is found higher on the `[[Prototype]]` chain and it's a setter (see Chapter 3), then the setter will always be called. No `foo` will be added to (aka, shadowed on) `myObject`, nor will the `foo` setter be redefined.
-
-Most developers assume that assignment of a property (`[[Put]]`) will always result in shadowing if the property already exists higher on the `[[Prototype]]` chain, but as you can see, that's only true in one (#1) of the three situations just described.
-
-If you want to shadow `foo` in cases #2 and #3, you cannot use `=` assignment, but must instead use `Object.defineProperty(..)` (see Chapter 3) to add `foo` to `myObject`.
-
-**Note:** Case #2 may be the most surprising of the three. The presence of a *read-only* property prevents a property of the same name being implicitly created (shadowed) at a lower level of a `[[Prototype]]` chain. The reason for this restriction is primarily to reinforce the illusion of class-inherited properties. If you think of the `foo` at a higher level of the chain as having been inherited (copied down) to `myObject`, then it makes sense to enforce the non-writable nature of that `foo` property on `myObject`. If you however separate the illusion from the fact, and recognize that no such inheritance copying *actually* occurred (see Chapters 4 and 5), it's a little unnatural that `myObject` would be prevented from having a `foo` property just because some other object had a non-writable `foo` on it. It's even stranger that this restriction only applies to `=` assignment, but is not enforced when using `Object.defineProperty(..)`.
-
-Shadowing with **methods** leads to ugly *explicit pseudo-polymorphism* (see Chapter 4) if you need to delegate between them. Usually, shadowing is more complicated and nuanced than it's worth, **so you should try to avoid it if possible**. See Chapter 6 for an alternative design pattern, which among other things discourages shadowing in favor of cleaner alternatives.
-
-Shadowing can even occur implicitly in subtle ways, so care must be taken if trying to avoid it. Consider:
-
-```js
-var anotherObject = {
-	a: 2
-};
-
-var myObject = Object.create( anotherObject );
-
-anotherObject.a; // 2
-myObject.a; // 2
-
-anotherObject.hasOwnProperty( "a" ); // true
-myObject.hasOwnProperty( "a" ); // false
-
-myObject.a++; // oops, implicit shadowing!
-
-anotherObject.a; // 2
-myObject.a; // 3
-
-myObject.hasOwnProperty( "a" ); // true
-```
-
-Though it may appear that `myObject.a++` should (via delegation) look-up and just increment the `anotherObject.a` property itself *in place*, instead the `++` operation corresponds to `myObject.a = myObject.a + 1`. The result is `[[Get]]` looking up `a` property via `[[Prototype]]` to get the current value `2` from `anotherObject.a`, incrementing the value by one, then `[[Put]]` assigning the `3` value to a new shadowed property `a` on `myObject`. Oops!
-
-Be very careful when dealing with delegated properties that you modify. If you wanted to increment `anotherObject.a`, the only proper way is `anotherObject.a++`.
-
-## "Class"
-
-At this point, you might be wondering: "*Why* does one object need to link to another object?" What's the real benefit? That is a very appropriate question to ask, but we must first understand what `[[Prototype]]` is **not** before we can fully understand and appreciate what it *is* and how it's useful.
-
-As we explained in Chapter 4, in JavaScript, there are no abstract patterns/blueprints for objects called "classes" as there are in class-oriented languages. JavaScript **just** has objects.
-
-In fact, JavaScript is **almost unique** among languages as perhaps the only language with the right to use the label "object oriented", because it's one of a very short list of languages where an object can be created directly, without a class at all.
-
-In JavaScript, classes can't (being that they don't exist!) describe what an object can do. The object defines its own behavior directly. **There's *just* the object.**
-
-### "Class" Functions
-
-There's a peculiar kind of behavior in JavaScript that has been shamelessly abused for years to *hack* something that *looks* like "classes". We'll examine this approach in detail.
-
-The peculiar "sort-of class" behavior hinges on a strange characteristic of functions: all functions by default get a public, non-enumerable (see Chapter 3) property on them called `prototype`, which points at an otherwise arbitrary object.
-
-```js
-function Foo() {
-	// ...
-}
-
-Foo.prototype; // { }
-```
-
-This object is often called "Foo's prototype", because we access it via an unfortunately-named `Foo.prototype` property reference. However, that terminology is hopelessly destined to lead us into confusion, as we'll see shortly. Instead, I will call it "the object formerly known as Foo's prototype". Just kidding. How about: "object arbitrarily labeled 'Foo dot prototype'"?
-
-Whatever we call it, what exactly is this object?
-
-The most direct way to explain it is that each object created from calling `new Foo()` (see Chapter 2) will end up (somewhat arbitrarily) `[[Prototype]]`-linked to this "Foo dot prototype" object.
-
-Let's illustrate:
-
-```js
-function Foo() {
-	// ...
-}
-
-var a = new Foo();
-
-Object.getPrototypeOf( a ) === Foo.prototype; // true
-```
-
-When `a` is created by calling `new Foo()`, one of the things (see Chapter 2 for all *four* steps) that happens is that `a` gets an internal `[[Prototype]]` link to the object that `Foo.prototype` is pointing at.
-
-Stop for a moment and ponder the implications of that statement.
-
-In class-oriented languages, multiple **copies** (aka, "instances") of a class can be made, like stamping something out from a mold. As we saw in Chapter 4, this happens because the process of instantiating (or inheriting from) a class means, "copy the behavior plan from that class into a physical object", and this is done again for each new instance.
-
-But in JavaScript, there are no such copy-actions performed. You don't create multiple instances of a class. You can create multiple objects that `[[Prototype]]` *link* to a common object. But by default, no copying occurs, and thus these objects don't end up totally separate and disconnected from each other, but rather, quite ***linked***.
-
-`new Foo()` results in a new object (we called it `a`), and **that** new object `a` is internally `[[Prototype]]` linked to the `Foo.prototype` object.
-
-**We end up with two objects, linked to each other.** That's *it*. We didn't instantiate a class. We certainly didn't do any copying of behavior from a "class" into a concrete object. We just caused two objects to be linked to each other.
-
-In fact, the secret, which eludes most JS developers, is that the `new Foo()` function calling had really almost nothing *direct* to do with the process of creating the link. **It was sort of an accidental side-effect.** `new Foo()` is an indirect, round-about way to end up with what we want: **a new object linked to another object**.
-
-Can we get what we want in a more *direct* way? **Yes!** The hero is `Object.create(..)`. But we'll get to that in a little bit.
-
-#### What's in a name?
-
-In JavaScript, we don't make *copies* from one object ("class") to another ("instance"). We make *links* between objects. For the `[[Prototype]]` mechanism, visually, the arrows move from right to left, and from bottom to top.
-
-<img src="fig3.png">
-
-This mechanism is often called "prototypal inheritance" (we'll explore the code in detail shortly), which is commonly said to be the dynamic-language version of "classical inheritance". It's an attempt to piggy-back on the common understanding of what "inheritance" means in the class-oriented world, but *tweak* (**read: pave over**) the understood semantics, to fit dynamic scripting.
-
-The word "inheritance" has a very strong meaning (see Chapter 4), with plenty of mental precedent. Merely adding "prototypal" in front to distinguish the *actually nearly opposite* behavior in JavaScript has left in its wake nearly two decades of miry confusion.
-
-I like to say that sticking "prototypal" in front "inheritance" to drastically reverse its actual meaning is like holding an orange in one hand, an apple in the other, and insisting on calling the apple a "red orange". No matter what confusing label I put in front of it, that doesn't change the *fact* that one fruit is an apple and the other is an orange.
-
-The better approach is to plainly call an apple an apple -- to use the most accurate and direct terminology. That makes it easier to understand both their similarities and their **many differences**, because we all have a simple, shared understanding of what "apple" means.
-
-Because of the confusion and conflation of terms, I believe the label "prototypal inheritance" itself (and trying to mis-apply all its associated class-orientation terminology, like "class", "constructor", "instance", "polymorphism", etc) has done **more harm than good** in explaining how JavaScript's mechanism *really* works.
-
-"Inheritance" implies a *copy* operation, and JavaScript doesn't copy object properties (natively, by default). Instead, JS creates a link between two objects, where one object can essentially *delegate* property/function access to another object. "Delegation" (see Chapter 6) is a much more accurate term for JavaScript's object-linking mechanism.
-
-Another term which is sometimes thrown around in JavaScript is "differential inheritance". The idea here is that we describe an object's behavior in terms of what is *different* from a more general descriptor. For example, you explain that a car is a kind of vehicle, but one that has exactly 4 wheels, rather than re-describing all the specifics of what makes up a general vehicle (engine, etc).
-
-If you try to think of any given object in JS as the sum total of all behavior that is *available* via delegation, and **in your mind you flatten** all that behavior into one tangible *thing*, then you can (sorta) see how "differential inheritance" might fit.
-
-But just like with "prototypal inheritance", "differential inheritance" pretends that your mental model is more important than what is physically happening in the language. It overlooks the fact that object `B` is not actually differentially constructed, but is instead built with specific characteristics defined, alongside "holes" where nothing is defined. It is in these "holes" (gaps in, or lack of, definition) that delegation *can* take over and, on the fly, "fill them in" with delegated behavior.
-
-The object is not, by native default, flattened into the single differential object, **through copying**, that the mental model of "differential inheritance" implies. As such, "differential inheritance" is just not as natural a fit for describing how JavaScript's `[[Prototype]]` mechanism actually works.
-
-You *can choose* to prefer the "differential inheritance" terminology and mental model, as a matter of taste, but there's no denying the fact that it *only* fits the mental acrobatics in your mind, not the physical behavior in the engine.
-
-### "Constructors"
-
-Let's go back to some earlier code:
-
-```js
-function Foo() {
-	// ...
-}
-
-var a = new Foo();
-```
-
-What exactly leads us to think `Foo` is a "class"?
-
-For one, we see the use of the `new` keyword, just like class-oriented languages do when they construct class instances. For another, it appears that we are in fact executing a *constructor* method of a class, because `Foo()` is actually a method that gets called, just like how a real class's constructor gets called when you instantiate that class.
-
-To further the confusion of "constructor" semantics, the arbitrarily labeled `Foo.prototype` object has another trick up its sleeve. Consider this code:
-
-```js
-function Foo() {
-	// ...
-}
-
-Foo.prototype.constructor === Foo; // true
-
-var a = new Foo();
-a.constructor === Foo; // true
-```
-
-The `Foo.prototype` object by default (at declaration time on line 1 of the snippet!) gets a public, non-enumerable (see Chapter 3) property called `.constructor`, and this property is a reference back to the function (`Foo` in this case) that the object is associated with. Moreover, we see that object `a` created by the "constructor" call `new Foo()` *seems* to also have a property on it called `.constructor` which similarly points to "the function which created it".
-
-**Note:** This is not actually true. `a` has no `.constructor` property on it, and though `a.constructor` does in fact resolve to the `Foo` function, "constructor" **does not actually mean** "was constructed by", as it appears. We'll explain this strangeness shortly.
-
-Oh, yeah, also... by convention in the JavaScript world, "class"es are named with a capital letter, so the fact that it's `Foo` instead of `foo` is a strong clue that we intend it to be a "class". That's totally obvious to you, right!?
-
-**Note:** This convention is so strong that many JS linters actually *complain* if you call `new` on a method with a lowercase name, or if we don't call `new` on a function that happens to start with a capital letter. That sort of boggles the mind that we struggle so much to get (fake) "class-orientation" *right* in JavaScript that we create linter rules to ensure we use capital letters, even though the capital letter doesn't mean ***anything* at all** to the JS engine.
-
-#### Constructor Or Call?
-
-In the above snippet, it's tempting to think that `Foo` is a "constructor", because we call it with `new` and we observe that it "constructs" an object.
-
-In reality, `Foo` is no more a "constructor" than any other function in your program. Functions themselves are **not** constructors. However, when you put the `new` keyword in front of a normal function call, that makes that function call a "constructor call". In fact, `new` sort of hijacks any normal function and calls it in a fashion that constructs an object, **in addition to whatever else it was going to do**.
-
-For example:
-
-```js
-function NothingSpecial() {
-	console.log( "Don't mind me!" );
-}
-
-var a = new NothingSpecial();
-// "Don't mind me!"
-
-a; // {}
-```
-
-`NothingSpecial` is just a plain old normal function, but when called with `new`, it *constructs* an object, almost as a side-effect, which we happen to assign to `a`. The **call** was a *constructor call*, but `NothingSpecial` is not, in and of itself, a *constructor*.
-
-In other words, in JavaScript, it's most appropriate to say that a "constructor" is **any function called with the `new` keyword** in front of it.
-
-Functions aren't constructors, but function calls are "constructor calls" if and only if `new` is used.
-
-### Mechanics
-
-Are *those* the only common triggers for ill-fated "class" discussions in JavaScript?
-
-**Not quite.** JS developers have strived to simulate as much as they can of class-orientation:
-
-```js
-function Foo(name) {
-	this.name = name;
-}
-
-Foo.prototype.myName = function() {
-	return this.name;
-};
-
-var a = new Foo( "a" );
-var b = new Foo( "b" );
-
-a.myName(); // "a"
-b.myName(); // "b"
-```
-
-This snippet shows two additional "class-orientation" tricks in play:
-
-1. `this.name = name`: adds the `.name` property onto each object (`a` and `b`, respectively; see Chapter 2 about `this` binding), similar to how class instances encapsulate data values.
-
-2. `Foo.prototype.myName = ...`: perhaps the more interesting technique, this adds a property (function) to the `Foo.prototype` object. Now, `a.myName()` works, but perhaps surprisingly. How?
-
-In the above snippet, it's strongly tempting to think that when `a` and `b` are created, the properties/functions on the `Foo.prototype` object are *copied* over to each of `a` and `b` objects. **However, that's not what happens.**
-
-At the beginning of this chapter, we explained the `[[Prototype]]` link, and how it provides the fall-back look-up steps if a property reference isn't found directly on an object, as part of the default `[[Get]]` algorithm.
-
-So, by virtue of how they are created, `a` and `b` each end up with an internal `[[Prototype]]` linkage to `Foo.prototype`. When `myName` is not found on `a` or `b`, respectively, it's instead found (through delegation, see Chapter 6) on `Foo.prototype`.
-
-#### "Constructor" Redux
-
-Recall the discussion from earlier about the `.constructor` property, and how it *seems* like `a.constructor === Foo` being true means that `a` has an actual `.constructor` property on it, pointing at `Foo`? **Not correct.**
-
-This is just unfortunate confusion. In actuality, the `.constructor` reference is also *delegated* up to `Foo.prototype`, which **happens to**, by default, have a `.constructor` that points at `Foo`.
-
-It *seems* awfully convenient that an object `a` "constructed by" `Foo` would have access to a `.constructor` property that points to `Foo`. But that's nothing more than a false sense of security. It's a happy accident, almost tangentially, that `a.constructor` *happens* to point at `Foo` via this default `[[Prototype]]` delegation. There's actually several ways that the ill-fated assumption of `.constructor` meaning "was constructed by" can come back to bite you.
-
-For one, the `.constructor` property on `Foo.prototype` is only there by default on the object created when `Foo` the function is declared. If you create a new object, and replace a function's default `.prototype` object reference, the new object will not by default magically get a `.constructor` on it.
-
-Consider:
-
-```js
-function Foo() { /* .. */ }
-
-Foo.prototype = { /* .. */ }; // create a new prototype object
-
-var a1 = new Foo();
-a1.constructor === Foo; // false!
-a1.constructor === Object; // true!
-```
-
-`Object(..)` didn't "construct" `a1` did it? It sure seems like `Foo()` "constructed" it. Many developers think of `Foo()` as doing the construction, but where everything falls apart is when you think "constructor" means "was constructed by", because by that reasoning, `a1.constructor` should be `Foo`, but it isn't!
-
-What's happening? `a1` has no `.constructor` property, so it delegates up the `[[Prototype]]` chain to `Foo.prototype`. But that object doesn't have a `.constructor` either (like the default `Foo.prototype` object would have had!), so it keeps delegating, this time up to `Object.prototype`, the top of the delegation chain. *That* object indeed has a `.constructor` on it, which points to the built-in `Object(..)` function.
-
-**Misconception, busted.**
-
-Of course, you can add `.constructor` back to the `Foo.prototype` object, but this takes manual work, especially if you want to match native behavior and have it be non-enumerable (see Chapter 3).
-
-For example:
-
-```js
-function Foo() { /* .. */ }
-
-Foo.prototype = { /* .. */ }; // create a new prototype object
-
-// Need to properly "fix" the missing `.constructor`
-// property on the new object serving as `Foo.prototype`.
-// See Chapter 3 for `defineProperty(..)`.
-Object.defineProperty( Foo.prototype, "constructor" , {
-	enumerable: false,
-	writable: true,
-	configurable: true,
-	value: Foo    // point `.constructor` at `Foo`
-} );
-```
-
-That's a lot of manual work to fix `.constructor`. Moreover, all we're really doing is perpetuating the misconception that "constructor" means "was constructed by". That's an *expensive* illusion.
-
-The fact is, `.constructor` on an object arbitrarily points, by default, at a function who, reciprocally, has a reference back to the object -- a reference which it calls `.prototype`. The words "constructor" and "prototype" only have a loose default meaning that might or might not hold true later. The best thing to do is remind yourself, "constructor does not mean constructed by".
-
-`.constructor` is not a magic immutable property. It *is* non-enumerable (see snippet above), but its value is writable (can be changed), and moreover, you can add or overwrite (intentionally or accidentally) a property of the name `constructor` on any object in any `[[Prototype]]` chain, with any value you see fit.
-
-By virtue of how the `[[Get]]` algorithm traverses the `[[Prototype]]` chain, a `.constructor` property reference found anywhere may resolve quite differently than you'd expect.
-
-See how arbitrary its meaning actually is?
-
-The result? Some arbitrary object-property reference like `a1.constructor` cannot actually be *trusted* to be the assumed default function reference. Moreover, as we'll see shortly, just by simple omission, `a1.constructor` can even end up pointing somewhere quite surprising and insensible.
-
-`a1.constructor` is extremely unreliable, and an unsafe reference to rely upon in your code. **Generally, such references should be avoided where possible.**
-
-## "(Prototypal) Inheritance"
-
-We've seen some approximations of "class" mechanics as typically hacked into JavaScript programs. But JavaScript "class"es would be rather hollow if we didn't have an approximation of "inheritance".
-
-Actually, we've already seen the mechanism which is commonly called "prototypal inheritance" at work when `a` was able to "inherit from" `Foo.prototype`, and thus get access to the `myName()` function. But we traditionally think of "inheritance" as being a relationship between two "classes", rather than between "class" and "instance".
-
-<img src="fig3.png">
-
-Recall this figure from earlier, which shows not only delegation from an object (aka, "instance") `a1` to object `Foo.prototype`, but from `Bar.prototype` to `Foo.prototype`, which somewhat resembles the concept of Parent-Child class inheritance. *Resembles*, except of course for the direction of the arrows, which show these are delegation links rather than copy operations.
-
-And, here's the typical "prototype style" code that creates such links:
-
-```js
-function Foo(name) {
-	this.name = name;
-}
-
-Foo.prototype.myName = function() {
-	return this.name;
-};
-
-function Bar(name,label) {
-	Foo.call( this, name );
-	this.label = label;
-}
-
-// here, we make a new `Bar.prototype`
-// linked to `Foo.prototype`
-Bar.prototype = Object.create( Foo.prototype );
-
-// Beware! Now `Bar.prototype.constructor` is gone,
-// and might need to be manually "fixed" if you're
-// in the habit of relying on such properties!
-
-Bar.prototype.myLabel = function() {
-	return this.label;
-};
-
-var a = new Bar( "a", "obj a" );
-
-a.myName(); // "a"
-a.myLabel(); // "obj a"
-```
-
-**Note:** To understand why `this` points to `a` in the above code snippet, see Chapter 2.
-
-The important part is `Bar.prototype = Object.create( Foo.prototype )`. `Object.create(..)` *creates* a "new" object out of thin air, and links that new object's internal `[[Prototype]]` to the object you specify (`Foo.prototype` in this case).
-
-In other words, that line says: "make a *new* 'Bar dot prototype' object that's linked to 'Foo dot prototype'."
-
-When `function Bar() { .. }` is declared, `Bar`, like any other function, has a `.prototype` link to its default object. But *that* object is not linked to `Foo.prototype` like we want. So, we create a *new* object that *is* linked as we want, effectively throwing away the original incorrectly-linked object.
-
-**Note:** A common mis-conception/confusion here is that either of the following approaches would *also* work, but they do not work as you'd expect:
-
-```js
-// doesn't work like you want!
-Bar.prototype = Foo.prototype;
-
-// works kinda like you want, but with
-// side-effects you probably don't want :(
-Bar.prototype = new Foo();
-```
-
-`Bar.prototype = Foo.prototype` doesn't create a new object for `Bar.prototype` to be linked to. It just makes `Bar.prototype` be another reference to `Foo.prototype`, which effectively links `Bar` directly to **the same object as** `Foo` links to: `Foo.prototype`. This means when you start assigning, like `Bar.prototype.myLabel = ...`, you're modifying **not a separate object** but *the* shared `Foo.prototype` object itself, which would affect any objects linked to `Foo.prototype`. This is almost certainly not what you want. If it *is* what you want, then you likely don't need `Bar` at all, and should just use only `Foo` and make your code simpler.
-
-`Bar.prototype = new Foo()` **does in fact** create a new object which is duly linked to `Foo.prototype` as we'd want. But, it uses the `Foo(..)` "constructor call" to do it. If that function has any side-effects (such as logging, changing state, registering against other objects, **adding data properties to `this`**, etc.), those side-effects happen at the time of this linking (and likely against the wrong object!), rather than only when the eventual `Bar()` "descendents" are created, as would likely be expected.
-
-So, we're left with using `Object.create(..)` to make a new object that's properly linked, but without having the side-effects of calling `Foo(..)`. The slight downside is that we have to create a new object, throwing the old one away, instead of modifying the existing default object we're provided.
-
-It would be *nice* if there was a standard and reliable way to modify the linkage of an existing object. Prior to ES6, there's a non-standard and not fully-cross-browser way, via the `.__proto__` property, which is settable. ES6 adds a `Object.setPrototypeOf(..)` helper utility, which does the trick in a standard and predictable way.
-
-Compare the pre-ES6 and ES6-standardized techniques for linking `Bar.prototype` to `Foo.prototype`, side-by-side:
-
-```js
-// pre-ES6
-// throws away default existing `Bar.prototype`
-Bar.prototype = Object.create( Foo.prototype );
-
-// ES6+
-// modifies existing `Bar.prototype`
-Object.setPrototypeOf( Bar.prototype, Foo.prototype );
-```
-
-Ignoring the slight performance disadvantage (throwing away an object that's later garbage collected) of the `Object.create(..)` approach, it's a little bit shorter and may be perhaps a little easier to read than the ES6+ approach. But it's probably a syntactic wash either way.
-
-### Inspecting "Class" Relationships
-
-What if you have an object like `a` and want to find out what object (if any) it delegates to? Inspecting an instance (just an object in JS) for its inheritance ancestry (delegation linkage in JS) is often called *introspection* (or *reflection*) in traditional class-oriented environments.
-
-Consider:
-
-```js
-function Foo() {
-	// ...
-}
-
-Foo.prototype.blah = ...;
-
-var a = new Foo();
-```
-
-How do we then introspect `a` to find out its "ancestry" (delegation linkage)? The first approach embraces the "class" confusion:
-
-```js
-a instanceof Foo; // true
-```
-
-The `instanceof` operator takes a plain object as its left-hand operand and a **function** as its right-hand operand. The question `instanceof` answers is: **in the entire `[[Prototype]]` chain of `a`, does the object arbitrarily pointed to by `Foo.prototype` ever appear?**
-
-Unfortunately, this means that you can only inquire about the "ancestry" of some object (`a`) if you have some **function** (`Foo`, with its attached `.prototype` reference) to test with. If you have two arbitrary objects, say `a` and `b`, and want to find out if *the objects* are related to each other through a `[[Prototype]]` chain, `instanceof` alone can't help.
-
-**Note:** If you use the built-in `.bind(..)` utility to make a hard-bound function (see Chapter 2), the function created will not have a `.prototype` property. Using `instanceof` with such a function transparently substitutes the `.prototype` of the *target function* that the hard-bound function was created from.
-
-It's fairly uncommon to use hard-bound functions as "constructor calls", but if you do, it will behave as if the original *target function* was invoked instead, which means that using `instanceof` with a hard-bound function also behaves according to the original function.
-
-This snippet illustrates the ridiculousness of trying to reason about relationships between **two objects** using "class" semantics and `instanceof`:
-
-```js
-// helper utility to see if `o1` is
-// related to (delegates to) `o2`
-function isRelatedTo(o1, o2) {
-	function F(){}
-	F.prototype = o2;
-	return o1 instanceof F;
-}
-
-var a = {};
-var b = Object.create( a );
-
-isRelatedTo( b, a ); // true
-```
-
-Inside `isRelatedTo(..)`, we borrow a throw-away function `F`, reassign its `.prototype` to arbitrarily point to some object `o2`, then ask if `o1` is an "instance of" `F`. Obviously `o1` isn't *actually* inherited or descended or even constructed from `F`, so it should be clear why this kind of exercise is silly and confusing. **The problem comes down to the awkwardness of class semantics forced upon JavaScript**, in this case as revealed by the indirect semantics of `instanceof`.
-
-The second, and much cleaner, approach to `[[Prototype]]` reflection is:
-
-```js
-Foo.prototype.isPrototypeOf( a ); // true
-```
-
-Notice that in this case, we don't really care about (or even *need*) `Foo`, we just need an **object** (in our case, arbitrarily labeled `Foo.prototype`) to test against another **object**. The question `isPrototypeOf(..)` answers is: **in the entire `[[Prototype]]` chain of `a`, does `Foo.prototype` ever appear?**
-
-Same question, and exact same answer. But in this second approach, we don't actually need the indirection of referencing a **function** (`Foo`) whose `.prototype` property will automatically be consulted.
-
-We *just need* two **objects** to inspect a relationship between them. For example:
-
-```js
-// Simply: does `b` appear anywhere in
-// `c`s [[Prototype]] chain?
-b.isPrototypeOf( c );
-```
-
-Notice, this approach doesn't require a function ("class") at all. It just uses object references directly to `b` and `c`, and inquires about their relationship. In other words, our `isRelatedTo(..)` utility above is built-in to the language, and it's called `isPrototypeOf(..)`.
-
-We can also directly retrieve the `[[Prototype]]` of an object. As of ES5, the standard way to do this is:
-
-```js
-Object.getPrototypeOf( a );
-```
-
-And you'll notice that object reference is what we'd expect:
-
-```js
-Object.getPrototypeOf( a ) === Foo.prototype; // true
-```
-
-Most browsers (not all!) have also long supported a non-standard alternate way of accessing the internal `[[Prototype]]`:
-
-```js
-a.__proto__ === Foo.prototype; // true
-```
-
-The strange `.__proto__` (not standardized until ES6!) property "magically" retrieves the internal `[[Prototype]]` of an object as a reference, which is quite helpful if you want to directly inspect (or even traverse: `.__proto__.__proto__...`) the chain.
-
-Just as we saw earlier with `.constructor`, `.__proto__` doesn't actually exist on the object you're inspecting (`a` in our running example). In fact, it exists (non-enumerable; see Chapter 2) on the built-in `Object.prototype`, along with the other common utilities (`.toString()`, `.isPrototypeOf(..)`, etc).
-
-Moreover, `.__proto__` looks like a property, but it's actually more appropriate to think of it as a getter/setter (see Chapter 3).
-
-Roughly, we could envision `.__proto__` implemented (see Chapter 3 for object property definitions) like this:
-
-```js
-Object.defineProperty( Object.prototype, "__proto__", {
-	get: function() {
-		return Object.getPrototypeOf( this );
-	},
-	set: function(o) {
-		// setPrototypeOf(..) as of ES6
-		Object.setPrototypeOf( this, o );
-		return o;
-	}
-} );
-```
-
-So, when we access (retrieve the value of) `a.__proto__`, it's like calling `a.__proto__()` (calling the getter function). *That* function call has `a` as its `this` even though the getter function exists on the `Object.prototype` object (see Chapter 2 for `this` binding rules), so it's just like saying `Object.getPrototypeOf( a )`.
-
-`.__proto__` is also a settable property, just like using ES6's `Object.setPrototypeOf(..)` shown earlier. However, generally you **should not change the `[[Prototype]]` of an existing object**.
-
-There are some very complex, advanced techniques used deep in some frameworks that allow tricks like "subclassing" an `Array`, but this is commonly frowned on in general programming practice, as it usually leads to *much* harder to understand/maintain code.
-
-**Note:** As of ES6, the `class` keyword will allow something that approximates "subclassing" of built-in's like `Array`. See Appendix A for discussion of the `class` syntax added in ES6.
-
-The only other narrow exception (as mentioned earlier) would be setting the `[[Prototype]]` of a default function's `.prototype` object to reference some other object (besides `Object.prototype`). That would avoid replacing that default object entirely with a new linked object. Otherwise, **it's best to treat object `[[Prototype]]` linkage as a read-only characteristic** for ease of reading your code later.
-
-**Note:** The JavaScript community unofficially coined a term for the double-underscore, specifically the leading one in properties like `__proto__`: "dunder". So, the "cool kids" in JavaScript would generally pronounce `__proto__` as "dunder proto".
-
-## Object Links
-
-As we've now seen, the `[[Prototype]]` mechanism is an internal link that exists on one object which references some other object.
-
-This linkage is (primarily) exercised when a property/method reference is made against the first object, and no such property/method exists. In that case, the `[[Prototype]]` linkage tells the engine to look for the property/method on the linked-to object. In turn, if that object cannot fulfill the look-up, its `[[Prototype]]` is followed, and so on. This series of links between objects forms what is called the "prototype chain".
-
-### `Create()`ing Links
-
-We've thoroughly debunked why JavaScript's `[[Prototype]]` mechanism is **not** like *classes*, and we've seen how it instead creates **links** between proper objects.
-
-What's the point of the `[[Prototype]]` mechanism? Why is it so common for JS developers to go to so much effort (emulating classes) in their code to wire up these linkages?
-
-Remember we said much earlier in this chapter that `Object.create(..)` would be a hero? Now, we're ready to see how.
-
-```js
-var foo = {
-	something: function() {
-		console.log( "Tell me something good..." );
+var a, b;
+
+a = do {
+	if (true) {
+		b = 4 + 38;
 	}
 };
 
-var bar = Object.create( foo );
-
-bar.something(); // Tell me something good...
+a;	// 42
 ```
 
-`Object.create(..)` creates a new object (`bar`) linked to the object we specified (`foo`), which gives us all the power (delegation) of the `[[Prototype]]` mechanism, but without any of the unnecessary complication of `new` functions acting as classes and constructor calls, confusing `.prototype` and `.constructor` references, or any of that extra stuff.
+The `do { .. }` expression executes a block (with one or many statements in it), and the final statement completion value inside the block becomes the completion value *of* the `do` expression, which can then be assigned to `a` as shown.
 
-**Note:** `Object.create(null)` creates an object that has an empty (aka, `null`) `[[Prototype]]` linkage, and thus the object can't delegate anywhere. Since such an object has no prototype chain, the `instanceof` operator (explained earlier) has nothing to check, so it will always return `false`. These special empty-`[[Prototype]]` objects are often called "dictionaries" as they are typically used purely for storing data in properties, mostly because they have no possible surprise effects from any delegated properties/functions on the `[[Prototype]]` chain, and are thus purely flat data storage.
+The general idea is to be able to treat statements as expressions -- they can show up inside other statements -- without needing to wrap them in an inline function expression and perform an explicit `return ..`.
 
-We don't *need* classes to create meaningful relationships between two objects. The only thing we should **really care about** is objects linked together for delegation, and `Object.create(..)` gives us that linkage without all the class cruft.
+For now, statement completion values are not much more than trivia. But they're probably going to take on more significance as JS evolves, and hopefully `do { .. }` expressions will reduce the temptation to use stuff like `eval(..)`.
 
-#### `Object.create()` Polyfilled
+**Warning:** Repeating my earlier admonition: avoid `eval(..)`. Seriously. See the *Scope & Closures* title of this series for more explanation.
 
-`Object.create(..)` was added in ES5. You may need to support pre-ES5 environments (like older IE's), so let's take a look at a simple **partial** polyfill for `Object.create(..)` that gives us the capability that we need even in those older JS environments:
+### Expression Side Effects
+
+Most expressions don't have side effects. For example:
 
 ```js
-if (!Object.create) {
-	Object.create = function(o) {
-		function F(){}
-		F.prototype = o;
-		return new F();
+var a = 2;
+var b = a + 3;
+```
+
+The expression `a + 3` did not *itself* have a side effect, like for instance changing `a`. It had a result, which is `5`, and that result was assigned to `b` in the statement `b = a + 3`.
+
+The most common example of an expression with (possible) side effects is a function call expression:
+
+```js
+function foo() {
+	a = a + 1;
+}
+
+var a = 1;
+foo();		// result: `undefined`, side effect: changed `a`
+```
+
+There are other side-effecting expressions, though. For example:
+
+```js
+var a = 42;
+var b = a++;
+```
+
+The expression `a++` has two separate behaviors. *First*, it returns the current value of `a`, which is `42` (which then gets assigned to `b`). But *next*, it changes the value of `a` itself, incrementing it by one.
+
+```js
+var a = 42;
+var b = a++;
+
+a;	// 43
+b;	// 42
+```
+
+Many developers would mistakenly believe that `b` has value `43` just like `a` does. But the confusion comes from not fully considering the *when* of the side effects of the `++` operator.
+
+The `++` increment operator and the `--` decrement operator are both unary operators (see Chapter 4), which can be used in either a postfix ("after") position or prefix ("before") position.
+
+```js
+var a = 42;
+
+a++;	// 42
+a;		// 43
+
+++a;	// 44
+a;		// 44
+```
+
+When `++` is used in the prefix position as `++a`, its side effect (incrementing `a`) happens *before* the value is returned from the expression, rather than *after* as with `a++`.
+
+**Note:** Would you think `++a++` was legal syntax? If you try it, you'll get a `ReferenceError` error, but why? Because side-effecting operators **require a variable reference** to target their side effects to. For `++a++`, the `a++` part is evaluated first (because of operator precedence -- see below), which gives back the value of `a` _before_ the increment. But then it tries to evaluate `++42`, which (if you try it) gives the same `ReferenceError` error, since `++` can't have a side effect directly on a value like `42`.
+
+It is sometimes mistakenly thought that you can encapsulate the *after* side effect of `a++` by wrapping it in a `( )` pair, like:
+
+```js
+var a = 42;
+var b = (a++);
+
+a;	// 43
+b;	// 42
+```
+
+Unfortunately, `( )` itself doesn't define a new wrapped expression that would be evaluated *after* the *after side effect* of the `a++` expression, as we might have hoped. In fact, even if it did, `a++` returns `42` first, and unless you have another expression that reevaluates `a` after the side effect of `++`, you're not going to get `43` from that expression, so `b` will not be assigned `43`.
+
+There's an option, though: the `,` statement-series comma operator. This operator allows you to string together multiple standalone expression statements into a single statement:
+
+```js
+var a = 42, b;
+b = ( a++, a );
+
+a;	// 43
+b;	// 43
+```
+
+**Note:** The `( .. )` around `a++, a` is required here. The reason is operator precedence, which we'll cover later in this chapter.
+
+The expression `a++, a` means that the second `a` statement expression gets evaluated *after* the *after side effects* of the first `a++` statement expression, which means it returns the `43` value for assignment to `b`.
+
+Another example of a side-effecting operator is `delete`. As we showed in Chapter 2, `delete` is used to remove a property from an `object` or a slot from an `array`. But it's usually just called as a standalone statement:
+
+```js
+var obj = {
+	a: 42
+};
+
+obj.a;			// 42
+delete obj.a;	// true
+obj.a;			// undefined
+```
+
+The result value of the `delete` operator is `true` if the requested operation is valid/allowable, or `false` otherwise. But the side effect of the operator is that it removes the property (or array slot).
+
+**Note:** What do we mean by valid/allowable? Nonexistent properties, or properties that exist and are configurable (see Chapter 3 of the *this & Object Prototypes* title of this series) will return `true` from the `delete` operator. Otherwise, the result will be `false` or an error.
+
+One last example of a side-effecting operator, which may at once be both obvious and nonobvious, is the `=` assignment operator.
+
+Consider:
+
+```js
+var a;
+
+a = 42;		// 42
+a;			// 42
+```
+
+It may not seem like `=` in `a = 42` is a side-effecting operator for the expression. But if we examine the result value of the `a = 42` statement, it's the value that was just assigned (`42`), so the assignment of that same value into `a` is essentially a side effect.
+
+**Tip:** The same reasoning about side effects goes for the compound-assignment operators like `+=`, `-=`, etc. For example, `a = b += 2` is processed first as `b += 2` (which is `b = b + 2`), and the result of *that* `=` assignment is then assigned to `a`.
+
+This behavior that an assignment expression (or statement) results in the assigned value is primarily useful for chained assignments, such as:
+
+```js
+var a, b, c;
+
+a = b = c = 42;
+```
+
+Here, `c = 42` is evaluated to `42` (with the side effect of assigning `42` to `c`), then `b = 42` is evaluated to `42` (with the side effect of assigning `42` to `b`), and finally `a = 42` is evaluated (with the side effect of assigning `42` to `a`).
+
+**Warning:** A common mistake developers make with chained assignments is like `var a = b = 42`. While this looks like the same thing, it's not. If that statement were to happen without there also being a separate `var b` (somewhere in the scope) to formally declare `b`, then `var a = b = 42` would not declare `b` directly. Depending on `strict` mode, that would either throw an error or create an accidental global (see the *Scope & Closures* title of this series).
+
+Another scenario to consider:
+
+```js
+function vowels(str) {
+	var matches;
+
+	if (str) {
+		// pull out all the vowels
+		matches = str.match( /[aeiou]/g );
+
+		if (matches) {
+			return matches;
+		}
+	}
+}
+
+vowels( "Hello World" ); // ["e","o","o"]
+```
+
+This works, and many developers prefer such. But using an idiom where we take advantage of the assignment side effect, we can simplify by combining the two `if` statements into one:
+
+```js
+function vowels(str) {
+	var matches;
+
+	// pull out all the vowels
+	if (str && (matches = str.match( /[aeiou]/g ))) {
+		return matches;
+	}
+}
+
+vowels( "Hello World" ); // ["e","o","o"]
+```
+
+**Note:** The `( .. )` around `matches = str.match..` is required. The reason is operator precedence, which we'll cover in the "Operator Precedence" section later in this chapter.
+
+I prefer this shorter style, as I think it makes it clearer that the two conditionals are in fact related rather than separate. But as with most stylistic choices in JS, it's purely opinion which one is *better*.
+
+### Contextual Rules
+
+There are quite a few places in the JavaScript grammar rules where the same syntax means different things depending on where/how it's used. This kind of thing can, in isolation, cause quite a bit of confusion.
+
+We won't exhaustively list all such cases here, but just call out a few of the common ones.
+
+#### `{ .. }` Curly Braces
+
+There's two main places (and more coming as JS evolves!) that a pair of `{ .. }` curly braces will show up in your code. Let's take a look at each of them.
+
+##### Object Literals
+
+First, as an `object` literal:
+
+```js
+// assume there's a `bar()` function defined
+
+var a = {
+	foo: bar()
+};
+```
+
+How do we know this is an `object` literal? Because the `{ .. }` pair is a value that's getting assigned to `a`.
+
+**Note:** The `a` reference is called an "l-value" (aka left-hand value) since it's the target of an assignment. The `{ .. }` pair is an "r-value" (aka right-hand value) since it's used *just* as a value (in this case as the source of an assignment).
+
+##### Labels
+
+What happens if we remove the `var a =` part of the above snippet?
+
+```js
+// assume there's a `bar()` function defined
+
+{
+	foo: bar()
+}
+```
+
+A lot of developers assume that the `{ .. }` pair is just a standalone `object` literal that doesn't get assigned anywhere. But it's actually entirely different.
+
+Here, `{ .. }` is just a regular code block. It's not very idiomatic in JavaScript (much more so in other languages!) to have a standalone `{ .. }` block like that, but it's perfectly valid JS grammar. It can be especially helpful when combined with `let` block-scoping declarations (see the *Scope & Closures* title in this series).
+
+The `{ .. }` code block here is functionally pretty much identical to the code block being attached to some statement, like a `for`/`while` loop, `if` conditional, etc.
+
+But if it's a normal block of code, what's that bizarre looking `foo: bar()` syntax, and how is that legal?
+
+It's because of a little known (and, frankly, discouraged) feature in JavaScript called "labeled statements." `foo` is a label for the statement `bar()` (which has omitted its trailing `;` -- see "Automatic Semicolons" later in this chapter). But what's the point of a labeled statement?
+
+If JavaScript had a `goto` statement, you'd theoretically be able to say `goto foo` and have execution jump to that location in code. `goto`s are usually considered terrible coding idioms as they make code much harder to understand (aka "spaghetti code"), so it's a *very good thing* that JavaScript doesn't have a general `goto`.
+
+However, JS *does* support a limited, special form of `goto`: labeled jumps. Both the `continue` and `break` statements can optionally accept a specified label, in which case the program flow "jumps" kind of like a `goto`. Consider:
+
+```js
+// `foo` labeled-loop
+foo: for (var i=0; i<4; i++) {
+	for (var j=0; j<4; j++) {
+		// whenever the loops meet, continue outer loop
+		if (j == i) {
+			// jump to the next iteration of
+			// the `foo` labeled-loop
+			continue foo;
+		}
+
+		// skip odd multiples
+		if ((j * i) % 2 == 1) {
+			// normal (non-labeled) `continue` of inner loop
+			continue;
+		}
+
+		console.log( i, j );
+	}
+}
+// 1 0
+// 2 0
+// 2 1
+// 3 0
+// 3 2
+```
+
+**Note:** `continue foo` does not mean "go to the 'foo' labeled position to continue", but rather, "continue the loop that is labeled 'foo' with its next iteration." So, it's not *really* an arbitrary `goto`.
+
+As you can see, we skipped over the odd-multiple `3 1` iteration, but the labeled-loop jump also skipped iterations `1 1` and `2 2`.
+
+Perhaps a slightly more useful form of the labeled jump is with `break __` from inside an inner loop where you want to break out of the outer loop. Without a labeled `break`, this same logic could sometimes be rather awkward to write:
+
+```js
+// `foo` labeled-loop
+foo: for (var i=0; i<4; i++) {
+	for (var j=0; j<4; j++) {
+		if ((i * j) >= 3) {
+			console.log( "stopping!", i, j );
+			// break out of the `foo` labeled loop
+			break foo;
+		}
+
+		console.log( i, j );
+	}
+}
+// 0 0
+// 0 1
+// 0 2
+// 0 3
+// 1 0
+// 1 1
+// 1 2
+// stopping! 1 3
+```
+
+**Note:** `break foo` does not mean "go to the 'foo' labeled position to continue," but rather, "break out of the loop/block that is labeled 'foo' and continue *after* it." Not exactly a `goto` in the traditional sense, huh?
+
+The nonlabeled `break` alternative to the above would probably need to involve one or more functions, shared scope variable access, etc. It would quite likely be more confusing than labeled `break`, so here using a labeled `break` is perhaps the better option.
+
+A label can apply to a non-loop block, but only `break` can reference such a non-loop label. You can do a labeled `break ___` out of any labeled block, but you cannot `continue ___` a non-loop label, nor can you do a non-labeled `break` out of a block.
+
+```js
+function foo() {
+	// `bar` labeled-block
+	bar: {
+		console.log( "Hello" );
+		break bar;
+		console.log( "never runs" );
+	}
+	console.log( "World" );
+}
+
+foo();
+// Hello
+// World
+```
+
+Labeled loops/blocks are extremely uncommon, and often frowned upon. It's best to avoid them if possible; for example using function calls instead of the loop jumps. But there are perhaps some limited cases where they might be useful. If you're going to use a labeled jump, make sure to document what you're doing with plenty of comments!
+
+It's a very common belief that JSON is a proper subset of JS, so a string of JSON (like `{"a":42}` -- notice the quotes around the property name as JSON requires!) is thought to be a valid JavaScript program. **Not true!** Try putting `{"a":42}` into your JS console, and you'll get an error.
+
+That's because statement labels cannot have quotes around them, so `"a"` is not a valid label, and thus `:` can't come right after it.
+
+So, JSON is truly a subset of JS syntax, but JSON is not valid JS grammar by itself.
+
+One extremely common misconception along these lines is that if you were to load a JS file into a `<script src=..>` tag that only has JSON content in it (like from an API call), the data would be read as valid JavaScript but just be inaccessible to the program. JSON-P (the practice of wrapping the JSON data in a function call, like `foo({"a":42})`) is usually said to solve this inaccessibility by sending the value to one of your program's functions.
+
+**Not true!** The totally valid JSON value `{"a":42}` by itself would actually throw a JS error because it'd be interpreted as a statement block with an invalid label. But `foo({"a":42})` is valid JS because in it, `{"a":42}` is an `object` literal value being passed to `foo(..)`. So, properly said, **JSON-P makes JSON into valid JS grammar!**
+
+##### Blocks
+
+Another commonly cited JS gotcha (related to coercion -- see Chapter 4) is:
+
+```js
+[] + {}; // "[object Object]"
+{} + []; // 0
+```
+
+This seems to imply the `+` operator gives different results depending on whether the first operand is the `[]` or the `{}`. But that actually has nothing to do with it!
+
+On the first line, `{}` appears in the `+` operator's expression, and is therefore interpreted as an actual value (an empty `object`). Chapter 4 explained that `[]` is coerced to `""` and thus `{}` is coerced to a `string` value as well: `"[object Object]"`.
+
+But on the second line, `{}` is interpreted as a standalone `{}` empty block (which does nothing). Blocks don't need semicolons to terminate them, so the lack of one here isn't a problem. Finally, `+ []` is an expression that *explicitly coerces* (see Chapter 4) the `[]` to a `number`, which is the `0` value.
+
+##### Object Destructuring
+
+Starting with ES6, another place that you'll see `{ .. }` pairs showing up is with "destructuring assignments" (see the *ES6 & Beyond* title of this series for more info), specifically `object` destructuring. Consider:
+
+```js
+function getData() {
+	// ..
+	return {
+		a: 42,
+		b: "foo"
 	};
 }
+
+var { a, b } = getData();
+
+console.log( a, b ); // 42 "foo"
 ```
 
-This polyfill works by using a throw-away `F` function and overriding its `.prototype` property to point to the object we want to link to. Then we use `new F()` construction to make a new object that will be linked as we specified.
-
-This usage of `Object.create(..)` is by far the most common usage, because it's the part that *can be* polyfilled. There's an additional set of functionality that the standard ES5 built-in `Object.create(..)` provides, which is **not polyfillable** for pre-ES5. As such, this capability is far-less commonly used. For completeness sake, let's look at that additional functionality:
+As you can probably tell, `var { a , b } = ..` is a form of ES6 destructuring assignment, which is roughly equivalent to:
 
 ```js
-var anotherObject = {
-	a: 2
-};
-
-var myObject = Object.create( anotherObject, {
-	b: {
-		enumerable: false,
-		writable: true,
-		configurable: false,
-		value: 3
-	},
-	c: {
-		enumerable: true,
-		writable: false,
-		configurable: false,
-		value: 4
-	}
-} );
-
-myObject.hasOwnProperty( "a" ); // false
-myObject.hasOwnProperty( "b" ); // true
-myObject.hasOwnProperty( "c" ); // true
-
-myObject.a; // 2
-myObject.b; // 3
-myObject.c; // 4
+var res = getData();
+var a = res.a;
+var b = res.b;
 ```
 
-The second argument to `Object.create(..)` specifies property names to add to the newly created object, via declaring each new property's *property descriptor* (see Chapter 3). Because polyfilling property descriptors into pre-ES5 is not possible, this additional functionality on `Object.create(..)` also cannot be polyfilled.
+**Note:** `{ a, b }` is actually ES6 destructuring shorthand for `{ a: a, b: b }`, so either will work, but it's expected that the shorter `{ a, b }` will be become the preferred form.
 
-The vast majority of usage of `Object.create(..)` uses the polyfill-safe subset of functionality, so most developers are fine with using the **partial polyfill** in pre-ES5 environments.
-
-Some developers take a much stricter view, which is that no function should be polyfilled unless it can be *fully* polyfilled. Since `Object.create(..)` is one of those partial-polyfill'able utilities, this narrower perspective says that if you need to use any of the functionality of `Object.create(..)` in a pre-ES5 environment, instead of polyfilling, you should use a custom utility, and stay away from using the name `Object.create` entirely. You could instead define your own utility, like:
+Object destructuring with a `{ .. }` pair can also be used for named function arguments, which is sugar for this same sort of implicit object property assignment:
 
 ```js
-function createAndLinkObject(o) {
-	function F(){}
-	F.prototype = o;
-	return new F();
+function foo({ a, b, c }) {
+	// no need for:
+	// var a = obj.a, b = obj.b, c = obj.c
+	console.log( a, b, c );
 }
 
-var anotherObject = {
-	a: 2
-};
-
-var myObject = createAndLinkObject( anotherObject );
-
-myObject.a; // 2
+foo( {
+	c: [1,2,3],
+	a: 42,
+	b: "foo"
+} );	// 42 "foo" [1, 2, 3]
 ```
 
-I do not share this strict opinion. I fully endorse the common partial-polyfill of `Object.create(..)` as shown above, and using it in your code even in pre-ES5. I'll leave it to you to make your own decision.
+So, the context we use `{ .. }` pairs in entirely determines what they mean, which illustrates the difference between syntax and grammar. It's very important to understand these nuances to avoid unexpected interpretations by the JS engine.
 
-### Links As Fallbacks?
+#### `else if` And Optional Blocks
 
-It may be tempting to think that these links between objects *primarily* provide a sort of fallback for "missing" properties or methods. While that may be an observed outcome, I don't think it represents the right way of thinking about `[[Prototype]]`.
+It's a common misconception that JavaScript has an `else if` clause, because you can do:
+
+```js
+if (a) {
+	// ..
+}
+else if (b) {
+	// ..
+}
+else {
+	// ..
+}
+```
+
+But there's a hidden characteristic of the JS grammar here: there is no `else if`. But `if` and `else` statements are allowed to omit the `{ }` around their attached block if they only contain a single statement. You've seen this many times before, undoubtedly:
+
+```js
+if (a) doSomething( a );
+```
+
+Many JS style guides will insist that you always use `{ }` around a single statement block, like:
+
+```js
+if (a) { doSomething( a ); }
+```
+
+However, the exact same grammar rule applies to the `else` clause, so the `else if` form you've likely always coded is *actually* parsed as:
+
+```js
+if (a) {
+	// ..
+}
+else {
+	if (b) {
+		// ..
+	}
+	else {
+		// ..
+	}
+}
+```
+
+The `if (b) { .. } else { .. }` is a single statement that follows the `else`, so you can either put the surrounding `{ }` in or not. In other words, when you use `else if`, you're technically breaking that common style guide rule and just defining your `else` with a single `if` statement.
+
+Of course, the `else if` idiom is extremely common and results in one less level of indentation, so it's attractive. Whichever way you do it, just call out explicitly in your own style guide/rules and don't assume things like `else if` are direct grammar rules.
+
+## Operator Precedence
+
+As we covered in Chapter 4, JavaScript's version of `&&` and `||` are interesting in that they select and return one of their operands, rather than just resulting in `true` or `false`. That's easy to reason about if there are only two operands and one operator.
+
+```js
+var a = 42;
+var b = "foo";
+
+a && b;	// "foo"
+a || b;	// 42
+```
+
+But what about when there's two operators involved, and three operands?
+
+```js
+var a = 42;
+var b = "foo";
+var c = [1,2,3];
+
+a && b || c; // ???
+a || b && c; // ???
+```
+
+To understand what those expressions result in, we're going to need to understand what rules govern how the operators are processed when there's more than one present in an expression.
+
+These rules are called "operator precedence."
+
+I bet most readers feel they have a decent grasp on operator precedence. But as with everything else we've covered in this book series, we're going to poke and prod at that understanding to see just how solid it really is, and hopefully learn a few new things along the way.
+
+Recall the example from above:
+
+```js
+var a = 42, b;
+b = ( a++, a );
+
+a;	// 43
+b;	// 43
+```
+
+But what would happen if we remove the `( )`?
+
+```js
+var a = 42, b;
+b = a++, a;
+
+a;	// 43
+b;	// 42
+```
+
+Wait! Why did that change the value assigned to `b`?
+
+Because the `,` operator has a lower precedence than the `=` operator. So, `b = a++, a` is interpreted as `(b = a++), a`. Because (as we explained earlier) `a++` has *after side effects*, the assigned value to `b` is the value `42` before the `++` changes `a`.
+
+This is just a simple matter of needing to understand operator precedence. If you're going to use `,` as a statement-series operator, it's important to know that it actually has the lowest precedence. Every other operator will more tightly bind than `,` will.
+
+Now, recall this example from above:
+
+```js
+if (str && (matches = str.match( /[aeiou]/g ))) {
+	// ..
+}
+```
+
+We said the `( )` around the assignment is required, but why? Because `&&` has higher precedence than `=`, so without the `( )` to force the binding, the expression would instead be treated as `(str && matches) = str.match..`. But this would be an error, because the result of `(str && matches)` isn't going to be a variable, but instead a value (in this case `undefined`), and so it can't be the left-hand side of an `=` assignment!
+
+OK, so you probably think you've got this operator precedence thing down.
+
+Let's move on to a more complex example (which we'll carry throughout the next several sections of this chapter) to *really* test your understanding:
+
+```js
+var a = 42;
+var b = "foo";
+var c = false;
+
+var d = a && b || c ? c || b ? a : c && b : a;
+
+d;		// ??
+```
+
+OK, evil, I admit it. No one would write a string of expressions like that, right? *Probably* not, but we're going to use it to examine various issues around chaining multiple operators together, which *is* a very common task.
+
+The result above is `42`. But that's not nearly as interesting as how we can figure out that answer without just plugging it into a JS program to let JavaScript sort it out.
+
+Let's dig in.
+
+The first question -- it may not have even occurred to you to ask -- is, does the first part (`a && b || c`) behave like `(a && b) || c` or like `a && (b || c)`? Do you know for certain? Can you even convince yourself they are actually different?
+
+```js
+(false && true) || true;	// true
+false && (true || true);	// false
+```
+
+So, there's proof they're different. But still, how does `false && true || true` behave? The answer:
+
+```js
+false && true || true;		// true
+(false && true) || true;	// true
+```
+
+So we have our answer. The `&&` operator is evaluated first and the `||` operator is evaluated second.
+
+But is that just because of left-to-right processing? Let's reverse the order of operators:
+
+```js
+true || false && false;		// true
+
+(true || false) && false;	// false -- nope
+true || (false && false);	// true -- winner, winner!
+```
+
+Now we've proved that `&&` is evaluated first and then `||`, and in this case that was actually counter to generally expected left-to-right processing.
+
+So what caused the behavior? **Operator precedence**.
+
+Every language defines its own operator precedence list. It's dismaying, though, just how uncommon it is that JS developers have read JS's list.
+
+If you knew it well, the above examples wouldn't have tripped you up in the slightest, because you'd already know that `&&` is more precedent than `||`. But I bet a fair amount of readers had to think about it a little bit.
+
+**Note:** Unfortunately, the JS spec doesn't really have its operator precedence list in a convenient, single location. You have to parse through and understand all the grammar rules. So we'll try to lay out the more common and useful bits here in a more convenient format. For a complete list of operator precedence, see "Operator Precedence" on the MDN site (* https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Operator_Precedence).
+
+### Short Circuited
+
+In Chapter 4, we mentioned in a side note the "short circuiting" nature of operators like `&&` and `||`. Let's revisit that in more detail now.
+
+For both `&&` and `||` operators, the right-hand operand will **not be evaluated** if the left-hand operand is sufficient to determine the outcome of the operation. Hence, the name "short circuited" (in that if possible, it will take an early shortcut out).
+
+For example, with `a && b`, `b` is not evaluated if `a` is falsy, because the result of the `&&` operand is already certain, so there's no point in bothering to check `b`. Likewise, with `a || b`, if `a` is truthy, the result of the operand is already certain, so there's no reason to check `b`.
+
+This short circuiting can be very helpful and is commonly used:
+
+```js
+function doSomething(opts) {
+	if (opts && opts.cool) {
+		// ..
+	}
+}
+```
+
+The `opts` part of the `opts && opts.cool` test acts as sort of a guard, because if `opts` is unset (or is not an `object`), the expression `opts.cool` would throw an error. The `opts` test failing plus the short circuiting means that `opts.cool` won't even be evaluated, thus no error!
+
+Similarly, you can use `||` short circuiting:
+
+```js
+function doSomething(opts) {
+	if (opts.cache || primeCache()) {
+		// ..
+	}
+}
+```
+
+Here, we're checking for `opts.cache` first, and if it's present, we don't call the `primeCache()` function, thus avoiding potentially unnecessary work.
+
+### Tighter Binding
+
+But let's turn our attention back to that earlier complex statement example with all the chained operators, specifically the `? :` ternary operator parts. Does the `? :` operator have more or less precedence than the `&&` and `||` operators?
+
+```js
+a && b || c ? c || b ? a : c && b : a
+```
+
+Is that more like this:
+
+```js
+a && b || (c ? c || (b ? a : c) && b : a)
+```
+
+or this?
+
+```js
+(a && b || c) ? (c || b) ? a : (c && b) : a
+```
+
+The answer is the second one. But why?
+
+Because `&&` is more precedent than `||`, and `||` is more precedent than `? :`.
+
+So, the expression `(a && b || c)` is evaluated *first* before the `? :` it participates in. Another way this is commonly explained is that `&&` and `||` "bind more tightly" than `? :`. If the reverse was true, then `c ? c...` would bind more tightly, and it would behave (as the first choice) like `a && b || (c ? c..)`.
+
+### Associativity
+
+So, the `&&` and `||` operators bind first, then the `? :` operator. But what about multiple operators of the same precedence? Do they always process left-to-right or right-to-left?
+
+In general, operators are either left-associative or right-associative, referring to whether **grouping happens from the left or from the right**.
+
+It's important to note that associativity is *not* the same thing as left-to-right or right-to-left processing.
+
+But why does it matter whether processing is left-to-right or right-to-left? Because expressions can have side effects, like for instance with function calls:
+
+```js
+var a = foo() && bar();
+```
+
+Here, `foo()` is evaluated first, and then possibly `bar()` depending on the result of the `foo()` expression. That definitely could result in different program behavior than if `bar()` was called before `foo()`.
+
+But this behavior is *just* left-to-right processing (the default behavior in JavaScript!) -- it has nothing to do with the associativity of `&&`. In that example, since there's only one `&&` and thus no relevant grouping here, associativity doesn't even come into play.
+
+But with an expression like `a && b && c`, grouping *will* happen implicitly, meaning that either `a && b` or `b && c` will be evaluated first.
+
+Technically, `a && b && c` will be handled as `(a && b) && c`, because `&&` is left-associative (so is `||`, by the way). However, the right-associative alternative `a && (b && c)` behaves observably the same way. For the same values, the same expressions are evaluated in the same order.
+
+**Note:** If hypothetically `&&` was right-associative, it would be processed the same as if you manually used `( )` to create grouping like `a && (b && c)`. But that still **doesn't mean** that `c` would be processed before `b`. Right-associativity does **not** mean right-to-left evaluation, it means right-to-left **grouping**. Either way, regardless of the grouping/associativity, the strict ordering of evaluation will be `a`, then `b`, then `c` (aka left-to-right).
+
+So it doesn't really matter that much that `&&` and `||` are left-associative, other than to be accurate in how we discuss their definitions.
+
+But that's not always the case. Some operators would behave very differently depending on left-associativity vs. right-associativity.
+
+Consider the `? :` ("ternary" or "conditional") operator:
+
+```js
+a ? b : c ? d : e;
+```
+
+`? :` is right-associative, so which grouping represents how it will be processed?
+
+* `a ? b : (c ? d : e)`
+* `(a ? b : c) ? d : e`
+
+The answer is `a ? b : (c ? d : e)`. Unlike with `&&` and `||` above, the right-associativity here actually matters, as `(a ? b : c) ? d : e` *will* behave differently for some (but not all!) combinations of values.
+
+One such example:
+
+```js
+true ? false : true ? true : true;		// false
+
+true ? false : (true ? true : true);	// false
+(true ? false : true) ? true : true;	// true
+```
+
+Even more nuanced differences lurk with other value combinations, even if the end result is the same. Consider:
+
+```js
+true ? false : true ? true : false;		// false
+
+true ? false : (true ? true : false);	// false
+(true ? false : true) ? true : false;	// false
+```
+
+From that scenario, the same end result implies that the grouping is moot. However:
+
+```js
+var a = true, b = false, c = true, d = true, e = false;
+
+a ? b : (c ? d : e); // false, evaluates only `a` and `b`
+(a ? b : c) ? d : e; // false, evaluates `a`, `b` AND `e`
+```
+
+So, we've clearly proved that `? :` is right-associative, and that it actually matters with respect to how the operator behaves if chained with itself.
+
+Another example of right-associativity (grouping) is the `=` operator. Recall the chained assignment example from earlier in the chapter:
+
+```js
+var a, b, c;
+
+a = b = c = 42;
+```
+
+We asserted earlier that `a = b = c = 42` is processed by first evaluating the `c = 42` assignment, then `b = ..`, and finally `a = ..`. Why? Because of the right-associativity, which actually treats the statement like this: `a = (b = (c = 42))`.
+
+Remember our running complex assignment expression example from earlier in the chapter?
+
+```js
+var a = 42;
+var b = "foo";
+var c = false;
+
+var d = a && b || c ? c || b ? a : c && b : a;
+
+d;		// 42
+```
+
+Armed with our knowledge of precedence and associativity, we should now be able to break down the code into its grouping behavior like this:
+
+```js
+((a && b) || c) ? ((c || b) ? a : (c && b)) : a
+```
+
+Or, to present it indented if that's easier to understand:
+
+```js
+(
+  (a && b)
+    ||
+  c
+)
+  ?
+(
+  (c || b)
+    ?
+  a
+    :
+  (c && b)
+)
+  :
+a
+```
+
+Let's solve it now:
+
+1. `(a && b)` is `"foo"`.
+2. `"foo" || c` is `"foo"`.
+3. For the first `?` test, `"foo"` is truthy.
+4. `(c || b)` is `"foo"`.
+5. For the second `?` test, `"foo"` is truthy.
+6. `a` is `42`.
+
+That's it, we're done! The answer is `42`, just as we saw earlier. That actually wasn't so hard, was it?
+
+### Disambiguation
+
+You should now have a much better grasp on operator precedence (and associativity) and feel much more comfortable understanding how code with multiple chained operators will behave.
+
+But an important question remains: should we all write code understanding and perfectly relying on all the rules of operator precedence/associativity? Should we only use `( )` manual grouping when it's necessary to force a different processing binding/order?
+
+Or, on the other hand, should we recognize that even though such rules *are in fact* learnable, there's enough gotchas to warrant ignoring automatic precedence/associativity? If so, should we thus always use `( )` manual grouping and remove all reliance on these automatic behaviors?
+
+This debate is highly subjective, and heavily symmetrical to the debate in Chapter 4 over *implicit* coercion. Most developers feel the same way about both debates: either they accept both behaviors and code expecting them, or they discard both behaviors and stick to manual/explicit idioms.
+
+Of course, I cannot answer this question definitively for the reader here anymore than I could in Chapter 4. But I've presented you the pros and cons, and hopefully encouraged enough deeper understanding that you can make informed rather than hype-driven decisions.
+
+In my opinion, there's an important middle ground. We should mix both operator precedence/associativity *and* `( )` manual grouping into our programs -- I argue the same way in Chapter 4 for healthy/safe usage of *implicit* coercion, but certainly don't endorse it exclusively without bounds.
+
+For example, `if (a && b && c) ..` is perfectly OK to me, and I wouldn't do `if ((a && b) && c) ..` just to explicitly call out the associativity, because I think it's overly verbose.
+
+On the other hand, if I needed to chain two `? :` conditional operators together, I'd certainly use `( )` manual grouping to make it absolutely clear what my intended logic is.
+
+Thus, my advice here is similar to that of Chapter 4: **use operator precedence/associativity where it leads to shorter and cleaner code, but use `( )` manual grouping in places where it helps create clarity and reduce confusion.**
+
+## Automatic Semicolons
+
+ASI (Automatic Semicolon Insertion) is when JavaScript assumes a `;` in certain places in your JS program even if you didn't put one there.
+
+Why would it do that? Because if you omit even a single required `;` your program would fail. Not very forgiving. ASI allows JS to be tolerant of certain places where `;` aren't commonly thought  to be necessary.
+
+It's important to note that ASI will only take effect in the presence of a newline (aka line break). Semicolons are not inserted in the middle of a line.
+
+Basically, if the JS parser parses a line where a parser error would occur (a missing expected `;`), and it can reasonably insert one, it does so. What's reasonable for insertion? Only if there's nothing but whitespace and/or comments between the end of some statement and that line's newline/line break.
 
 Consider:
 
 ```js
-var anotherObject = {
-	cool: function() {
-		console.log( "cool!" );
-	}
-};
-
-var myObject = Object.create( anotherObject );
-
-myObject.cool(); // "cool!"
+var a = 42, b
+c;
 ```
 
-That code will work by virtue of `[[Prototype]]`, but if you wrote it that way so that `anotherObject` was acting as a fallback **just in case** `myObject` couldn't handle some property/method that some developer may try to call, odds are that your software is going to be a bit more "magical" and harder to understand and maintain.
+Should JS treat the `c` on the next line as part of the `var` statement? It certainly would if a `,` had come anywhere (even another line) between `b` and `c`. But since there isn't one, JS assumes instead that there's an implied `;` (at the newline) after `b`. Thus, `c;` is left as a standalone expression statement.
 
-That's not to say there aren't cases where fallbacks are an appropriate design pattern, but it's not very common or idiomatic in JS, so if you find yourself doing so, you might want to take a step back and reconsider if that's really appropriate and sensible design.
-
-**Note:** In ES6, an advanced functionality called `Proxy` is introduced which can provide something of a "method not found" type of behavior. `Proxy` is beyond the scope of this book, but will be covered in detail in a later book in the *"You Don't Know JS"* series.
-
-**Don't miss an important but nuanced point here.**
-
-Designing software where you intend for a developer to, for instance, call `myObject.cool()` and have that work even though there is no `cool()` method on `myObject` introduces some "magic" into your API design that can be surprising for future developers who maintain your software.
-
-You can however design your API with less "magic" to it, but still take advantage of the power of `[[Prototype]]` linkage.
+Similarly:
 
 ```js
-var anotherObject = {
-	cool: function() {
-		console.log( "cool!" );
-	}
-};
+var a = 42, b = "foo";
 
-var myObject = Object.create( anotherObject );
-
-myObject.doCool = function() {
-	this.cool(); // internal delegation!
-};
-
-myObject.doCool(); // "cool!"
+a
+b	// "foo"
 ```
 
-Here, we call `myObject.doCool()`, which is a method that *actually exists* on `myObject`, making our API design more explicit (less "magical"). *Internally*, our implementation follows the **delegation design pattern** (see Chapter 6), taking advantage of `[[Prototype]]` delegation to `anotherObject.cool()`.
+That's still a valid program without error, because expression statements also accept ASI.
 
-In other words, delegation will tend to be less surprising/confusing if it's an internal implementation detail rather than plainly exposed in your API interface design. We will expound on **delegation** in great detail in the next chapter.
+There's certain places where ASI is helpful, like for instance:
 
-## Review (TL;DR)
+```js
+var a = 42;
 
-When attempting a property access on an object that doesn't have that property, the object's internal `[[Prototype]]` linkage defines where the `[[Get]]` operation (see Chapter 3) should look next. This cascading linkage from object to object essentially defines a "prototype chain" (somewhat similar to a nested scope chain) of objects to traverse for property resolution.
+do {
+	// ..
+} while (a)	// <-- ; expected here!
+a;
+```
 
-All normal objects have the built-in `Object.prototype` as the top of the prototype chain (like the global scope in scope look-up), where property resolution will stop if not found anywhere prior in the chain. `toString()`, `valueOf()`, and several other common utilities exist on this `Object.prototype` object, explaining how all objects in the language are able to access them.
+The grammar requires a `;` after a `do..while` loop, but not after `while` or `for` loops. But most developers don't remember that! So, ASI helpfully steps in and inserts one.
 
-The most common way to get two objects linked to each other is using the `new` keyword with a function call, which among its four steps (see Chapter 2), it creates a new object linked to another object.
+As we said earlier in the chapter, statement blocks do not require `;` termination, so ASI isn't necessary:
 
-The "another object" that the new object is linked to happens to be the object referenced by the arbitrarily named `.prototype` property of the function called with `new`. Functions called with `new` are often called "constructors", despite the fact that they are not actually instantiating a class as *constructors* do in traditional class-oriented languages.
+```js
+var a = 42;
 
-While these JavaScript mechanisms can seem to resemble "class instantiation" and "class inheritance" from traditional class-oriented languages, the key distinction is that in JavaScript, no copies are made. Rather, objects end up linked to each other via an internal `[[Prototype]]` chain.
+while (a) {
+	// ..
+} // <-- no ; expected here
+a;
+```
 
-For a variety of reasons, not the least of which is terminology precedent, "inheritance" (and "prototypal inheritance") and all the other OO terms just do not make sense when considering how JavaScript *actually* works (not just applied to our forced mental models).
+The other major case where ASI kicks in is with the `break`, `continue`, `return`, and (ES6) `yield` keywords:
 
-Instead, "delegation" is a more appropriate term, because these relationships are not *copies* but delegation **links**.
+```js
+function foo(a) {
+	if (!a) return
+	a *= 2;
+	// ..
+}
+```
+
+The `return` statement doesn't carry across the newline to the `a *= 2` expression, as ASI assumes the `;` terminating the `return` statement. Of course, `return` statements *can* easily break across multiple lines, just not when there's nothing after `return` but the newline/line break.
+
+```js
+function foo(a) {
+	return (
+		a * 2 + 3 / 12
+	);
+}
+```
+
+Identical reasoning applies to `break`, `continue`, and `yield`.
+
+### Error Correction
+
+One of the most hotly contested *religious wars* in the JS community (besides tabs vs. spaces) is whether to rely heavily/exclusively on ASI or not.
+
+Most, but not all, semicolons are optional, but the two `;`s in the `for ( .. ) ..` loop header are required.
+
+On the pro side of this debate, many developers believe that ASI is a useful mechanism that allows them to write more terse (and more "beautiful") code by omitting all but the strictly required `;`s (which are very few). It is often asserted that ASI makes many `;`s optional, so a correctly written program *without them* is no different than a correctly written program *with them*.
+
+On the con side of the debate, many other developers will assert that there are *too many* places that can be accidental gotchas, especially for newer, less experienced developers, where unintended `;`s being magically inserted change the meaning. Similarly, some developers will argue that if they omit a semicolon, it's a flat-out mistake, and they want their tools (linters, etc.) to catch it before the JS engine *corrects* the mistake under the covers.
+
+Let me just share my perspective. A strict reading of the spec implies that ASI is an "error correction" routine. What kind of error, you may ask? Specifically, a **parser error**. In other words, in an attempt to have the parser fail less, ASI lets it be more tolerant.
+
+But tolerant of what? In my view, the only way a **parser error** occurs is if it's given an incorrect/errored program to parse. So, while ASI is strictly correcting parser errors, the only way it can get such errors is if there were first program authoring errors -- omitting semicolons where the grammar rules require them.
+
+So, to put it more bluntly, when I hear someone claim that they want to omit "optional semicolons," my brain translates that claim to "I want to write the most parser-broken program I can that will still work."
+
+I find that to be a ludicrous position to take and the arguments of saving keystrokes and having more "beautiful code" to be weak at best.
+
+Furthermore, I don't agree that this is the same thing as the spaces vs tabs debate -- that it's purely cosmetic -- but rather I believe it's a fundamental question of writing code that adheres to grammar requirements vs. code that relies on grammar exceptions to just barely skate through.
+
+Another way of looking at it is that relying on ASI is essentially considering newlines to be significant "whitespace." Other languages like Python have true significant whitespace. But is it really appropriate to think of JavaScript as having significant newlines as it stands today?
+
+My take: **use semicolons wherever you know they are "required," and limit your assumptions about ASI to a minimum.**
+
+But don't just take my word for it. Back in 2012, creator of JavaScript Brendan Eich said (http://brendaneich.com/2012/04/the-infernal-semicolon/) the following:
+
+> The moral of this story: ASI is (formally speaking) a syntactic error correction procedure. If you start to code as if it were a universal significant-newline rule, you will get into trouble.
+> ..
+> I wish I had made newlines more significant in JS back in those ten days in May, 1995.
+> ..
+> Be careful not to use ASI as if it gave JS significant newlines.
+
+## Errors
+
+Not only does JavaScript have different *subtypes* of errors (`TypeError`, `ReferenceError`, `SyntaxError`, etc.), but also the grammar defines certain errors to be enforced at compile time, as compared to all other errors that happen during runtime.
+
+In particular, there have long been a number of specific conditions that should be caught and reported as "early errors" (during compilation). Any straight-up syntax error is an early error (e.g., `a = ,`), but also the grammar defines things that are syntactically valid but disallowed nonetheless.
+
+Since execution of your code has not begun yet, these errors are not catchable with `try..catch`; they will just fail the parsing/compilation of your program.
+
+**Tip:** There's no requirement in the spec about exactly how browsers (and developer tools) should report errors. So you may see variations across browsers in the following error examples, in what specific subtype of error is reported or what the included error message text will be.
+
+One simple example is with syntax inside a regular expression literal. There's nothing wrong with the JS syntax here, but the invalid regex will throw an early error:
+
+```js
+var a = /+foo/;		// Error!
+```
+
+The target of an assignment must be an identifier (or an ES6 destructuring expression that produces one or more identifiers), so a value like `42` in that position is illegal and can be reported right away:
+
+```js
+var a;
+42 = a;		// Error!
+```
+
+ES5's `strict` mode defines even more early errors. For example, in `strict` mode, function parameter names cannot be duplicated:
+
+```js
+function foo(a,b,a) { }					// just fine
+
+function bar(a,b,a) { "use strict"; }	// Error!
+```
+
+Another `strict` mode early error is an object literal having more than one property of the same name:
+
+```js
+(function(){
+	"use strict";
+
+	var a = {
+		b: 42,
+		b: 43
+	};			// Error!
+})();
+```
+
+**Note:** Semantically speaking, such errors aren't technically *syntax* errors but more *grammar* errors -- the above snippets are syntactically valid. But since there is no `GrammarError` type, some browsers use `SyntaxError` instead.
+
+### Using Variables Too Early
+
+ES6 defines a (frankly confusingly named) new concept called the TDZ ("Temporal Dead Zone").
+
+The TDZ refers to places in code where a variable reference cannot yet be made, because it hasn't reached its required initialization.
+
+The most clear example of this is with ES6 `let` block-scoping:
+
+```js
+{
+	a = 2;		// ReferenceError!
+	let a;
+}
+```
+
+The assignment `a = 2` is accessing the `a` variable (which is indeed block-scoped to the `{ .. }` block) before it's been initialized by the `let a` declaration, so it's in the TDZ for `a` and throws an error.
+
+Interestingly, while `typeof` has an exception to be safe for undeclared variables (see Chapter 1), no such safety exception is made for TDZ references:
+
+```js
+{
+	typeof a;	// undefined
+	typeof b;	// ReferenceError! (TDZ)
+	let b;
+}
+```
+
+## Function Arguments
+
+Another example of a TDZ violation can be seen with ES6 default parameter values (see the *ES6 & Beyond* title of this series):
+
+```js
+var b = 3;
+
+function foo( a = 42, b = a + b + 5 ) {
+	// ..
+}
+```
+
+The `b` reference in the assignment would happen in the TDZ for the parameter `b` (not pull in the outer `b` reference), so it will throw an error. However, the `a` in the assignment is fine since by that time it's past the TDZ for parameter `a`.
+
+When using ES6's default parameter values, the default value is applied to the parameter if you either omit an argument, or you pass an `undefined` value in its place:
+
+```js
+function foo( a = 42, b = a + 1 ) {
+	console.log( a, b );
+}
+
+foo();					// 42 43
+foo( undefined );		// 42 43
+foo( 5 );				// 5 6
+foo( void 0, 7 );		// 42 7
+foo( null );			// null 1
+```
+
+**Note:** `null` is coerced to a `0` value in the `a + 1` expression. See Chapter 4 for more info.
+
+From the ES6 default parameter values perspective, there's no difference between omitting an argument and passing an `undefined` value. However, there is a way to detect the difference in some cases:
+
+```js
+function foo( a = 42, b = a + 1 ) {
+	console.log(
+		arguments.length, a, b,
+		arguments[0], arguments[1]
+	);
+}
+
+foo();					// 0 42 43 undefined undefined
+foo( 10 );				// 1 10 11 10 undefined
+foo( 10, undefined );	// 2 10 11 10 undefined
+foo( 10, null );		// 2 10 null 10 null
+```
+
+Even though the default parameter values are applied to the `a` and `b` parameters, if no arguments were passed in those slots, the `arguments` array will not have entries.
+
+Conversely, if you pass an `undefined` argument explicitly, an entry will exist in the `arguments` array for that argument, but it will be `undefined` and not (necessarily) the same as the default value that was applied to the named parameter for that same slot.
+
+While ES6 default parameter values can create divergence between the `arguments` array slot and the corresponding named parameter variable, this same disjointedness can also occur in tricky ways in ES5:
+
+```js
+function foo(a) {
+	a = 42;
+	console.log( arguments[0] );
+}
+
+foo( 2 );	// 42 (linked)
+foo();		// undefined (not linked)
+```
+
+If you pass an argument, the `arguments` slot and the named parameter are linked to always have the same value. If you omit the argument, no such linkage occurs.
+
+But in `strict` mode, the linkage doesn't exist regardless:
+
+```js
+function foo(a) {
+	"use strict";
+	a = 42;
+	console.log( arguments[0] );
+}
+
+foo( 2 );	// 2 (not linked)
+foo();		// undefined (not linked)
+```
+
+It's almost certainly a bad idea to ever rely on any such linkage, and in fact the linkage itself is a leaky abstraction that's exposing an underlying implementation detail of the engine, rather than a properly designed feature.
+
+Use of the `arguments` array has been deprecated (especially in favor of ES6 `...` rest parameters -- see the *ES6 & Beyond* title of this series), but that doesn't mean that it's all bad.
+
+Prior to ES6, `arguments` is the only way to get an array of all passed arguments to pass along to other functions, which turns out to be quite useful. You can also mix named parameters with the `arguments` array and be safe, as long as you follow one simple rule: **never refer to a named parameter *and* its corresponding `arguments` slot at the same time.** If you avoid that bad practice, you'll never expose the leaky linkage behavior.
+
+```js
+function foo(a) {
+	console.log( a + arguments[1] ); // safe!
+}
+
+foo( 10, 32 );	// 42
+```
+
+## `try..finally`
+
+You're probably familiar with how the `try..catch` block works. But have you ever stopped to consider the `finally` clause that can be paired with it? In fact, were you aware that `try` only requires either `catch` or `finally`, though both can be present if needed.
+
+The code in the `finally` clause *always* runs (no matter what), and it always runs right after the `try` (and `catch` if present) finish, before any other code runs. In one sense, you can kind of think of the code in a `finally` clause as being in a callback function that will always be called regardless of how the rest of the block behaves.
+
+So what happens if there's a `return` statement inside a `try` clause? It obviously will return a value, right? But does the calling code that receives that value run before or after the `finally`?
+
+```js
+function foo() {
+	try {
+		return 42;
+	}
+	finally {
+		console.log( "Hello" );
+	}
+
+	console.log( "never runs" );
+}
+
+console.log( foo() );
+// Hello
+// 42
+```
+
+The `return 42` runs right away, which sets up the completion value from the `foo()` call. This action completes the `try` clause and the `finally` clause immediately runs next. Only then is the `foo()` function complete, so that its completion value is returned back for the `console.log(..)` statement to use.
+
+The exact same behavior is true of a `throw` inside `try`:
+
+```js
+ function foo() {
+	try {
+		throw 42;
+	}
+	finally {
+		console.log( "Hello" );
+	}
+
+	console.log( "never runs" );
+}
+
+console.log( foo() );
+// Hello
+// Uncaught Exception: 42
+```
+
+Now, if an exception is thrown (accidentally or intentionally) inside a `finally` clause, it will override as the primary completion of that function. If a previous `return` in the `try` block had set a completion value for the function, that value will be abandoned.
+
+```js
+function foo() {
+	try {
+		return 42;
+	}
+	finally {
+		throw "Oops!";
+	}
+
+	console.log( "never runs" );
+}
+
+console.log( foo() );
+// Uncaught Exception: Oops!
+```
+
+It shouldn't be surprising that other nonlinear control statements like `continue` and `break` exhibit similar behavior to `return` and `throw`:
+
+```js
+for (var i=0; i<10; i++) {
+	try {
+		continue;
+	}
+	finally {
+		console.log( i );
+	}
+}
+// 0 1 2 3 4 5 6 7 8 9
+```
+
+The `console.log(i)` statement runs at the end of the loop iteration, which is caused by the `continue` statement. However, it still runs before the `i++` iteration update statement, which is why the values printed are `0..9` instead of `1..10`.
+
+**Note:** ES6 adds a `yield` statement, in generators (see the *Async & Performance* title of this series) which in some ways can be seen as an intermediate `return` statement. However, unlike a `return`, a `yield` isn't complete until the generator is resumed, which means a `try { .. yield .. }` has not completed. So an attached `finally` clause will not run right after the `yield` like it does with `return`.
+
+A `return` inside a `finally` has the special ability to override a previous `return` from the `try` or `catch` clause, but only if `return` is explicitly called:
+
+```js
+function foo() {
+	try {
+		return 42;
+	}
+	finally {
+		// no `return ..` here, so no override
+	}
+}
+
+function bar() {
+	try {
+		return 42;
+	}
+	finally {
+		// override previous `return 42`
+		return;
+	}
+}
+
+function baz() {
+	try {
+		return 42;
+	}
+	finally {
+		// override previous `return 42`
+		return "Hello";
+	}
+}
+
+foo();	// 42
+bar();	// undefined
+baz();	// "Hello"
+```
+
+Normally, the omission of `return` in a function is the same as `return;` or even `return undefined;`, but inside a `finally` block the omission of `return` does not act like an overriding `return undefined`; it just lets the previous `return` stand.
+
+In fact, we can really up the craziness if we combine `finally` with labeled `break` (discussed earlier in the chapter):
+
+```js
+function foo() {
+	bar: {
+		try {
+			return 42;
+		}
+		finally {
+			// break out of `bar` labeled block
+			break bar;
+		}
+	}
+
+	console.log( "Crazy" );
+
+	return "Hello";
+}
+
+console.log( foo() );
+// Crazy
+// Hello
+```
+
+But... don't do this. Seriously. Using a `finally` + labeled `break` to effectively cancel a `return` is doing your best to create the most confusing code possible. I'd wager no amount of comments will redeem this code.
+
+## `switch`
+
+Let's briefly explore the `switch` statement, a sort-of syntactic shorthand for an `if..else if..else..` statement chain.
+
+```js
+switch (a) {
+	case 2:
+		// do something
+		break;
+	case 42:
+		// do another thing
+		break;
+	default:
+		// fallback to here
+}
+```
+
+As you can see, it evaluates `a` once, then matches the resulting value to each `case` expression (just simple value expressions here). If a match is found, execution will begin in that matched `case`, and will either go until a `break` is encountered or until the end of the `switch` block is found.
+
+That much may not surprise you, but there are several quirks about `switch` you may not have noticed before.
+
+First, the matching that occurs between the `a` expression and each `case` expression is identical to the `===` algorithm (see Chapter 4). Often times `switch`es are used with absolute values in `case` statements, as shown above, so strict matching is appropriate.
+
+However, you may wish to allow coercive equality (aka `==`, see Chapter 4), and to do so you'll need to sort of "hack" the `switch` statement a bit:
+
+```js
+var a = "42";
+
+switch (true) {
+	case a == 10:
+		console.log( "10 or '10'" );
+		break;
+	case a == 42:
+		console.log( "42 or '42'" );
+		break;
+	default:
+		// never gets here
+}
+// 42 or '42'
+```
+
+This works because the `case` clause can have any expression (not just simple values), which means it will strictly match that expression's result to the test expression (`true`). Since `a == 42` results in `true` here, the match is made.
+
+Despite `==`, the `switch` matching itself is still strict, between `true` and `true` here. If the `case` expression resulted in something that was truthy but not strictly `true` (see Chapter 4), it wouldn't work. This can bite you if you're for instance using a "logical operator" like `||` or `&&` in your expression:
+
+```js
+var a = "hello world";
+var b = 10;
+
+switch (true) {
+	case (a || b == 10):
+		// never gets here
+		break;
+	default:
+		console.log( "Oops" );
+}
+// Oops
+```
+
+Since the result of `(a || b == 10)` is `"hello world"` and not `true`, the strict match fails. In this case, the fix is to force the expression explicitly to be a `true` or `false`, such as `case !!(a || b == 10):` (see Chapter 4).
+
+Lastly, the `default` clause is optional, and it doesn't necessarily have to come at the end (although that's the strong convention). Even in the `default` clause, the same rules apply about encountering a `break` or not:
+
+```js
+var a = 10;
+
+switch (a) {
+	case 1:
+	case 2:
+		// never gets here
+	default:
+		console.log( "default" );
+	case 3:
+		console.log( "3" );
+		break;
+	case 4:
+		console.log( "4" );
+}
+// default
+// 3
+```
+
+**Note:** As discussed previously about labeled `break`s, the `break` inside a `case` clause can also be labeled.
+
+The way this snippet processes is that it passes through all the `case` clause matching first, finds no match, then goes back up to the `default` clause and starts executing. Since there's no `break` there, it continues executing in the already skipped over `case 3` block, before stopping once it hits that `break`.
+
+While this sort of round-about logic is clearly possible in JavaScript, there's almost no chance that it's going to make for reasonable or understandable code. Be very skeptical if you find yourself wanting to create such circular logic flow, and if you really do, make sure you include plenty of code comments to explain what you're up to!
+
+## Review
+
+JavaScript grammar has plenty of nuance that we as developers should spend a little more time paying closer attention to than we typically do. A little bit of effort goes a long way to solidifying your deeper knowledge of the language.
+
+Statements and expressions have analogs in English language -- statements are like sentences and expressions are like phrases. Expressions can be pure/self-contained, or they can have side effects.
+
+The JavaScript grammar layers semantic usage rules (aka context) on top of the pure syntax. For example, `{ }` pairs used in various places in your program can mean statement blocks, `object` literals, (ES6) destructuring assignments, or (ES6) named function arguments.
+
+JavaScript operators all have well-defined rules for precedence (which ones bind first before others) and associativity (how multiple operator expressions are implicitly grouped). Once you learn these rules, it's up to you to decide if precedence/associativity are *too implicit* for their own good, or if they will aid in writing shorter, clearer code.
+
+ASI (Automatic Semicolon Insertion) is a parser-error-correction mechanism built into the JS engine, which allows it under certain circumstances to insert an assumed `;` in places where it is required, was omitted, *and* where insertion fixes the parser error. The debate rages over whether this behavior implies that most `;` are optional (and can/should be omitted for cleaner code) or whether it means that omitting them is making mistakes that the JS engine merely cleans up for you.
+
+JavaScript has several types of errors, but it's less known that it has two classifications for errors: "early" (compiler thrown, uncatchable) and "runtime" (`try..catch`able). All syntax errors are obviously early errors that stop the program before it runs, but there are others, too.
+
+Function arguments have an interesting relationship to their formal declared named parameters. Specifically, the `arguments` array has a number of gotchas of leaky abstraction behavior if you're not careful. Avoid `arguments` if you can, but if you must use it, by all means avoid using the positional slot in `arguments` at the same time as using a named parameter for that same argument.
+
+The `finally` clause attached to a `try` (or `try..catch`) offers some very interesting quirks in terms of execution processing order. Some of these quirks can be helpful, but it's possible to create lots of confusion, especially if combined with labeled blocks. As always, use `finally` to make code better and clearer, not more clever or confusing.
+
+The `switch` offers some nice shorthand for `if..else if..` statements, but beware of many common simplifying assumptions about its behavior. There are several quirks that can trip you up if you're not careful, but there's also some neat hidden tricks that `switch` has up its sleeve!
