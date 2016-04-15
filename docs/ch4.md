@@ -1,1919 +1,2247 @@
-# You Don't Know JS: Types & Grammar
-# Chapter 4: Coercion
+# You Don't Know JS: Async & Performance
+# Chapter 4: Generators
 
-Now that we much more fully understand JavaScript's types and values, we turn our attention to a very controversial topic: coercion.
+In Chapter 2, we identified two key drawbacks to expressing async flow control with callbacks:
 
-As we mentioned in Chapter 1, the debates over whether coercion is a useful feature or a flaw in the design of the language (or somewhere in between!) have raged since day one. If you've read other popular books on JS, you know that the overwhelmingly prevalent *message* out there is that coercion is magical, evil, confusing, and just downright a bad idea.
+* Callback-based async doesn't fit how our brain plans out steps of a task.
+* Callbacks aren't trustable or composable because of *inversion of control*.
 
-In the same overall spirit of this book series, rather than running away from coercion because everyone else does, or because you get bitten by some quirk, I think you should run toward that which you don't understand and seek to *get it* more fully.
+In Chapter 3, we detailed how Promises uninvert the *inversion of control* of callbacks, restoring trustability/composability.
 
-Our goal is to fully explore the pros and cons (yes, there *are* pros!) of coercion, so that you can make an informed decision on its appropriateness in your program.
+Now we turn our attention to expressing async flow control in a sequential, synchronous-looking fashion. The "magic" that makes it possible is ES6 **generators**.
 
-## Converting Values
+## Breaking Run-to-Completion
 
-Converting a value from one type to another is often called "type casting," when done explicitly, and "coercion" when done implicitly (forced by the rules of how a value is used).
+In Chapter 1, we explained an expectation that JS developers almost universally rely on in their code: once a function starts executing, it runs until it completes, and no other code can interrupt and run in between.
 
-**Note:** It may not be obvious, but JavaScript coercions always result in one of the scalar primitive (see Chapter 2) values, like `string`, `number`, or `boolean`. There is no coercion that results in a complex value like `object` or `function`. Chapter 3 covers "boxing," which wraps scalar primitive values in their `object` counterparts, but this is not really coercion in an accurate sense.
+As bizarre as it may seem, ES6 introduces a new type of function that does not behave with the run-to-completion behavior. This new type of function is called a "generator."
 
-Another way these terms are often distinguished is as follows: "type casting" (or "type conversion") occur in statically typed languages at compile time, while "type coercion" is a runtime conversion for dynamically typed languages.
-
-However, in JavaScript, most people refer to all these types of conversions as *coercion*, so the way I prefer to distinguish is to say "implicit coercion" vs. "explicit coercion."
-
-The difference should be obvious: "explicit coercion" is when it is obvious from looking at the code that a type conversion is intentionally occurring, whereas "implicit coercion" is when the type conversion will occur as a less obvious side effect of some other intentional operation.
-
-For example, consider these two approaches to coercion:
+To understand the implications, let's consider this example:
 
 ```js
-var a = 42;
+var x = 1;
 
-var b = a + "";			// implicit coercion
+function foo() {
+	x++;
+	bar();				// <-- what about this line?
+	console.log( "x:", x );
+}
 
-var c = String( a );	// explicit coercion
+function bar() {
+	x++;
+}
+
+foo();					// x: 3
 ```
 
-For `b`, the coercion that occurs happens implicitly, because the `+` operator combined with one of the operands being a `string` value (`""`) will insist on the operation being a `string` concatenation (adding two strings together), which *as a (hidden) side effect* will force the `42` value in `a` to be coerced to its `string` equivalent: `"42"`.
+In this example, we know for sure that `bar()` runs in between `x++` and `console.log(x)`. But what if `bar()` wasn't there? Obviously the result would be `2` instead of `3`.
 
-By contrast, the `String(..)` function makes it pretty obvious that it's explicitly taking the value in `a` and coercing it to a `string` representation.
+Now let's twist your brain. What if `bar()` wasn't present, but it could still somehow run between the `x++` and `console.log(x)` statements? How would that be possible?
 
-Both approaches accomplish the same effect: `"42"` comes from `42`. But it's the *how* that is at the heart of the heated debates over JavaScript coercion.
+In **preemptive** multithreaded languages, it would essentially be possible for `bar()` to "interrupt" and run at exactly the right moment between those two statements. But JS is not preemptive, nor is it (currently) multithreaded. And yet, a **cooperative** form of this "interruption" (concurrency) is possible, if `foo()` itself could somehow indicate a "pause" at that part in the code.
 
-**Note:** Technically, there's some nuanced behavioral difference here beyond the stylistic difference. We cover that in more detail later in the chapter, in the "Implicitly: Strings <--> Numbers" section.
+**Note:** I use the word "cooperative" not only because of the connection to classical concurrency terminology (see Chapter 1), but because as you'll see in the next snippet, the ES6 syntax for indicating a pause point in code is `yield` -- suggesting a politely *cooperative* yielding of control.
 
-The terms "explicit" and "implicit," or "obvious" and "hidden side effect," are *relative*.
-
-If you know exactly what `a + ""` is doing and you're intentionally doing that to coerce to a `string`, you might feel the operation is sufficiently "explicit." Conversely, if you've never seen the `String(..)` function used for `string` coercion, its behavior might seem hidden enough as to feel "implicit" to you.
-
-But we're having this discussion of "explicit" vs. "implicit" based on the likely opinions of an *average, reasonably informed, but not expert or JS specification devotee* developer. To whatever extent you do or do not find yourself fitting neatly in that bucket, you will need to adjust your perspective on our observations here accordingly.
-
-Just remember: it's often rare that we write our code and are the only ones who ever read it. Even if you're an expert on all the ins and outs of JS, consider how a less experienced teammate of yours will feel when they read your code. Will it be "explicit" or "implicit" to them in the same way it is for you?
-
-## Abstract Value Operations
-
-Before we can explore *explicit* vs *implicit* coercion, we need to learn the basic rules that govern how values *become* either a `string`, `number`, or `boolean`. The ES5 spec in section 9 defines several "abstract operations" (fancy spec-speak for "internal-only operation") with the rules of value conversion. We will specifically pay attention to: `ToString`, `ToNumber`, and `ToBoolean`, and to a lesser extent, `ToPrimitive`.
-
-### `ToString`
-
-When any non-`string` value is coerced to a `string` representation, the conversion is handled by the `ToString` abstract operation in section 9.8 of the specification.
-
-Built-in primitive values have natural stringification: `null` becomes `"null"`, `undefined` becomes `"undefined"` and `true` becomes `"true"`. `number`s are generally expressed in the natural way you'd expect, but as we discussed in Chapter 2, very small or very large `numbers` are represented in exponent form:
+Here's the ES6 code to accomplish such cooperative concurrency:
 
 ```js
-// multiplying `1.07` by `1000`, seven times over
-var a = 1.07 * 1000 * 1000 * 1000 * 1000 * 1000 * 1000 * 1000;
+var x = 1;
 
-// seven times three digits => 21 digits
-a.toString(); // "1.07e21"
+function *foo() {
+	x++;
+	yield; // pause!
+	console.log( "x:", x );
+}
+
+function bar() {
+	x++;
+}
 ```
 
-For regular objects, unless you specify your own, the default `toString()` (located in `Object.prototype.toString()`) will return the *internal `[[Class]]`* (see Chapter 3), like for instance `"[object Object]"`.
+**Note:** You will likely see most other JS documentation/code that will format a generator declaration as `function* foo() { .. }` instead of as I've done here with `function *foo() { .. }` -- the only difference being the stylistic positioning of the `*`. The two forms are functionally/syntactically identical, as is a third `function*foo() { .. }` (no space) form. There are arguments for both styles, but I basically prefer `function *foo..` because it then matches when I reference a generator in writing with `*foo()`. If I said only `foo()`, you wouldn't know as clearly if I was talking about a generator or a regular function. It's purely a stylistic preference.
 
-But as shown earlier, if an object has its own `toString()` method on it, and you use that object in a `string`-like way, its `toString()` will automatically be called, and the `string` result of that call will be used instead.
-
-**Note:** The way an object is coerced to a `string` technically goes through the `ToPrimitive` abstract operation (ES5 spec, section 9.1), but those nuanced details are covered in more detail in the `ToNumber` section later in this chapter, so we will skip over them here.
-
-Arrays have an overridden default `toString()` that stringifies as the (string) concatenation of all its values (each stringified themselves), with `","` in between each value:
+Now, how can we run the code in that previous snippet such that `bar()` executes at the point of the `yield` inside of `*foo()`?
 
 ```js
-var a = [1,2,3];
+// construct an iterator `it` to control the generator
+var it = foo();
 
-a.toString(); // "1,2,3"
+// start `foo()` here!
+it.next();
+x;						// 2
+bar();
+x;						// 3
+it.next();				// x: 3
 ```
 
-Again, `toString()` can either be called explicitly, or it will automatically be called if a non-`string` is used in a `string` context.
+OK, there's quite a bit of new and potentially confusing stuff in those two code snippets, so we've got plenty to wade through. But before we explain the different mechanics/syntax with ES6 generators, let's walk through the behavior flow:
 
-#### JSON Stringification
+1. The `it = foo()` operation does *not* execute the `*foo()` generator yet, but it merely constructs an *iterator* that will control its execution. More on *iterators* in a bit.
+2. The first `it.next()` starts the `*foo()` generator, and runs the `x++` on the first line of `*foo()`.
+3. `*foo()` pauses at the `yield` statement, at which point that first `it.next()` call finishes. At the moment, `*foo()` is still running and active, but it's in a paused state.
+4. We inspect the value of `x`, and it's now `2`.
+5. We call `bar()`, which increments `x` again with `x++`.
+6. We inspect the value of `x` again, and it's now `3`.
+7. The final `it.next()` call resumes the `*foo()` generator from where it was paused, and runs the `console.log(..)` statement, which uses the current value of `x` of `3`.
 
-Another task that seems awfully related to `ToString` is when you use the `JSON.stringify(..)` utility to serialize a value to a JSON-compatible `string` value.
+Clearly, `*foo()` started, but did *not* run-to-completion -- it paused at the `yield`. We resumed `*foo()` later, and let it finish, but that wasn't even required.
 
-It's important to note that this stringification is not exactly the same thing as coercion. But since it's related to the `ToString` rules above, we'll take a slight diversion to cover JSON stringification behaviors here.
+So, a generator is a special kind of function that can start and stop one or more times, and doesn't necessarily ever have to finish. While it won't be terribly obvious yet why that's so powerful, as we go throughout the rest of this chapter, that will be one of the fundamental building blocks we use to construct generators-as-async-flow-control as a pattern for our code.
 
-For most simple values, JSON stringification behaves basically the same as `toString()` conversions, except that the serialization result is *always a `string`*:
+### Input and Output
+
+A generator function is a special function with the new processing model we just alluded to. But it's still a function, which means it still has some basic tenets that haven't changed -- namely, that it still accepts arguments (aka "input"), and that it can still return a value (aka "output"):
 
 ```js
-JSON.stringify( 42 );	// "42"
-JSON.stringify( "42" );	// ""42"" (a string with a quoted string value in it)
-JSON.stringify( null );	// "null"
-JSON.stringify( true );	// "true"
+function *foo(x,y) {
+	return x * y;
+}
+
+var it = foo( 6, 7 );
+
+var res = it.next();
+
+res.value;		// 42
 ```
 
-Any *JSON-safe* value can be stringified by `JSON.stringify(..)`. But what is *JSON-safe*? Any value that can be represented validly in a JSON representation.
+We pass in the arguments `6` and `7` to `*foo(..)` as the parameters `x` and `y`, respectively. And `*foo(..)` returns the value `42` back to the calling code.
 
-It may be easier to consider values that are **not** JSON-safe. Some examples: `undefined`s, `function`s, (ES6+) `symbol`s, and `object`s with circular references (where property references in an object structure create a never-ending cycle through each other). These are all illegal values for a standard JSON structure, mostly because they aren't portable to other languages that consume JSON values.
+We now see a difference with how the generator is invoked compared to a normal function. `foo(6,7)` obviously looks familiar. But subtly, the `*foo(..)` generator hasn't actually run yet as it would have with a function.
 
-The `JSON.stringify(..)` utility will automatically omit `undefined`, `function`, and `symbol` values when it comes across them. If such a value is found in an `array`, that value is replaced by `null` (so that the array position information isn't altered). If found as a property of an `object`, that property will simply be excluded.
+Instead, we're just creating an *iterator* object, which we assign to the variable `it`, to control the `*foo(..)` generator. Then we call `it.next()`, which instructs the `*foo(..)` generator to advance from its current location, stopping either at the next `yield` or end of the generator.
+
+The result of that `next(..)` call is an object with a `value` property on it holding whatever value (if anything) was returned from `*foo(..)`. In other words, `yield` caused a value to be sent out from the generator during the middle of its execution, kind of like an intermediate `return`.
+
+Again, it won't be obvious yet why we need this whole indirect *iterator* object to control the generator. We'll get there, I *promise*.
+
+#### Iteration Messaging
+
+In addition to generators accepting arguments and having return values, there's even more powerful and compelling input/output messaging capability built into them, via `yield` and `next(..)`.
 
 Consider:
 
 ```js
-JSON.stringify( undefined );					// undefined
-JSON.stringify( function(){} );					// undefined
+function *foo(x) {
+	var y = x * (yield);
+	return y;
+}
 
-JSON.stringify( [1,undefined,function(){},4] );	// "[1,null,null,4]"
-JSON.stringify( { a:2, b:function(){} } );		// "{"a":2}"
+var it = foo( 6 );
+
+// start `foo(..)`
+it.next();
+
+var res = it.next( 7 );
+
+res.value;		// 42
 ```
 
-But if you try to `JSON.stringify(..)` an `object` with circular reference(s) in it, an error will be thrown.
+First, we pass in `6` as the parameter `x`. Then we call `it.next()`, and it starts up `*foo(..)`.
 
-JSON stringification has the special behavior that if an `object` value has a `toJSON()` method defined, this method will be called first to get a value to use for serialization.
+Inside `*foo(..)`, the `var y = x ..` statement starts to be processed, but then it runs across a `yield` expression. At that point, it pauses `*foo(..)` (in the middle of the assignment statement!), and essentially requests the calling code to provide a result value for the `yield` expression. Next, we call `it.next( 7 )`, which is passing the `7` value back in to *be* that result of the paused `yield` expression.
 
-If you intend to JSON stringify an object that may contain illegal JSON value(s), or if you just have values in the `object` that aren't appropriate for the serialization, you should define a `toJSON()` method for it that returns a *JSON-safe* version of the `object`.
+So, at this point, the assignment statement is essentially `var y = 6 * 7`. Now, `return y` returns that `42` value back as the result of the `it.next( 7 )` call.
 
-For example:
+Notice something very important but also easily confusing, even to seasoned JS developers: depending on your perspective, there's a mismatch between the `yield` and the `next(..)` call. In general, you're going to have one more `next(..)` call than you have `yield` statements -- the preceding snippet has one `yield` and two `next(..)` calls.
+
+Why the mismatch?
+
+Because the first `next(..)` always starts a generator, and runs to the first `yield`. But it's the second `next(..)` call that fulfills the first paused `yield` expression, and the third `next(..)` would fulfill the second `yield`, and so on.
+
+##### Tale of Two Questions
+
+Actually, which code you're thinking about primarily will affect whether there's a perceived mismatch or not.
+
+Consider only the generator code:
 
 ```js
-var o = { };
-
-var a = {
-	b: 42,
-	c: o,
-	d: function(){}
-};
-
-// create a circular reference inside `a`
-o.e = a;
-
-// would throw an error on the circular reference
-// JSON.stringify( a );
-
-// define a custom JSON value serialization
-a.toJSON = function() {
-	// only include the `b` property for serialization
-	return { b: this.b };
-};
-
-JSON.stringify( a ); // "{"b":42}"
+var y = x * (yield);
+return y;
 ```
 
-It's a very common misconception that `toJSON()` should return a JSON stringification representation. That's probably incorrect, unless you're wanting to actually stringify the `string` itself (usually not!). `toJSON()` should return the actual regular value (of whatever type) that's appropriate, and `JSON.stringify(..)` itself will handle the stringification.
+This **first** `yield` is basically *asking a question*: "What value should I insert here?"
 
-In other words, `toJSON()` should be interpreted as "to a JSON-safe value suitable for stringification," not "to a JSON string" as many developers mistakenly assume.
+Who's going to answer that question? Well, the **first** `next()` has already run to get the generator up to this point, so obviously *it* can't answer the question. So, the **second** `next(..)` call must answer the question *posed* by the **first** `yield`.
 
-Consider:
+See the mismatch -- second-to-first?
+
+But let's flip our perspective. Let's look at it not from the generator's point of view, but from the iterator's point of view.
+
+To properly illustrate this perspective, we also need to explain that messages can go in both directions -- `yield ..` as an expression can send out messages in response to `next(..)` calls, and `next(..)` can send values to a paused `yield` expression. Consider this slightly adjusted code:
 
 ```js
-var a = {
-	val: [1,2,3],
+function *foo(x) {
+	var y = x * (yield "Hello");	// <-- yield a value!
+	return y;
+}
 
-	// probably correct!
-	toJSON: function(){
-		return this.val.slice( 1 );
-	}
-};
+var it = foo( 6 );
 
-var b = {
-	val: [1,2,3],
+var res = it.next();	// first `next()`, don't pass anything
+res.value;				// "Hello"
 
-	// probably incorrect!
-	toJSON: function(){
-		return "[" +
-			this.val.slice( 1 ).join() +
-		"]";
-	}
-};
-
-JSON.stringify( a ); // "[2,3]"
-
-JSON.stringify( b ); // ""[2,3]""
+res = it.next( 7 );		// pass `7` to waiting `yield`
+res.value;				// 42
 ```
 
-In the second call, we stringified the returned `string` rather than the `array` itself, which was probably not what we wanted to do.
+`yield ..` and `next(..)` pair together as a two-way message passing system **during the execution of the generator**.
 
-While we're talking about `JSON.stringify(..)`, let's discuss some lesser-known functionalities that can still be very useful.
-
-An optional second argument can be passed to `JSON.stringify(..)` that is called *replacer*. This argument can either be an `array` or a `function`. It's used to customize the recursive serialization of an `object` by providing a filtering mechanism for which properties should and should not be included, in a similar way to how `toJSON()` can prepare a value for serialization.
-
-If *replacer* is an `array`, it should be an `array` of `string`s, each of which will specify a property name that is allowed to be included in the serialization of the `object`. If a property exists that isn't in this list, it will be skipped.
-
-If *replacer* is a `function`, it will be called once for the `object` itself, and then once for each property in the `object`, and each time is passed two arguments, *key* and *value*. To skip a *key* in the serialization, return `undefined`. Otherwise, return the *value* provided.
+So, looking only at the *iterator* code:
 
 ```js
-var a = {
-	b: 42,
-	c: "42",
-	d: [1,2,3]
-};
+var res = it.next();	// first `next()`, don't pass anything
+res.value;				// "Hello"
 
-JSON.stringify( a, ["b","c"] ); // "{"b":42,"c":"42"}"
-
-JSON.stringify( a, function(k,v){
-	if (k !== "c") return v;
-} );
-// "{"b":42,"d":[1,2,3]}"
+res = it.next( 7 );		// pass `7` to waiting `yield`
+res.value;				// 42
 ```
 
-**Note:** In the `function` *replacer* case, the key argument `k` is `undefined` for the first call (where the `a` object itself is being passed in). The `if` statement **filters out** the property named `"c"`. Stringification is recursive, so the `[1,2,3]` array has each of its values (`1`, `2`, and `3`) passed as `v` to *replacer*, with indexes (`0`, `1`, and `2`) as `k`.
+**Note:** We don't pass a value to the first `next()` call, and that's on purpose. Only a paused `yield` could accept such a value passed by a `next(..)`, and at the beginning of the generator when we call the first `next()`, there **is no paused `yield`** to accept such a value. The specification and all compliant browsers just silently **discard** anything passed to the first `next()`. It's still a bad idea to pass a value, as you're just creating silently "failing" code that's confusing. So, always start a generator with an argument-free `next()`.
 
-A third optional argument can also be passed to `JSON.stringify(..)`, called *space*, which is used as indentation for prettier human-friendly output. *space* can be a positive integer to indicate how many space characters should be used at each indentation level. Or, *space* can be a `string`, in which case up to the first ten characters of its value will be used for each indentation level.
+The first `next()` call (with nothing passed to it) is basically *asking a question*: "What *next* value does the `*foo(..)` generator have to give me?" And who answers this question? The first `yield "hello"` expression.
+
+See? No mismatch there.
+
+Depending on *who* you think about asking the question, there is either a mismatch between the `yield` and `next(..)` calls, or not.
+
+But wait! There's still an extra `next()` compared to the number of `yield` statements. So, that final `it.next(7)` call is again asking the question about what *next* value the generator will produce. But there's no more `yield` statements left to answer, is there? So who answers?
+
+The `return` statement answers the question!
+
+And if there **is no `return`** in your generator -- `return` is certainly not any more required in generators than in regular functions -- there's always an assumed/implicit `return;` (aka `return undefined;`), which serves the purpose of default answering the question *posed* by the final `it.next(7)` call.
+
+These questions and answers -- the two-way message passing with `yield` and `next(..)` -- are quite powerful, but it's not obvious at all how these mechanisms are connected to async flow control. We're getting there!
+
+### Multiple Iterators
+
+It may appear from the syntactic usage that when you use an *iterator* to control a generator, you're controlling the declared generator function itself. But there's a subtlety that's easy to miss: each time you construct an *iterator*, you are implicitly constructing an instance of the generator which that *iterator* will control.
+
+You can have multiple instances of the same generator running at the same time, and they can even interact:
 
 ```js
-var a = {
-	b: 42,
-	c: "42",
-	d: [1,2,3]
-};
+function *foo() {
+	var x = yield 2;
+	z++;
+	var y = yield (x * z);
+	console.log( x, y, z );
+}
 
-JSON.stringify( a, null, 3 );
-// "{
-//    "b": 42,
-//    "c": "42",
-//    "d": [
-//       1,
-//       2,
-//       3
-//    ]
-// }"
+var z = 1;
 
-JSON.stringify( a, null, "-----" );
-// "{
-// -----"b": 42,
-// -----"c": "42",
-// -----"d": [
-// ----------1,
-// ----------2,
-// ----------3
-// -----]
-// }"
+var it1 = foo();
+var it2 = foo();
+
+var val1 = it1.next().value;			// 2 <-- yield 2
+var val2 = it2.next().value;			// 2 <-- yield 2
+
+val1 = it1.next( val2 * 10 ).value;		// 40  <-- x:20,  z:2
+val2 = it2.next( val1 * 5 ).value;		// 600 <-- x:200, z:3
+
+it1.next( val2 / 2 );					// y:300
+										// 20 300 3
+it2.next( val1 / 4 );					// y:10
+										// 200 10 3
 ```
 
-Remember, `JSON.stringify(..)` is not directly a form of coercion. We covered it here, however, for two reasons that relate its behavior to `ToString` coercion:
+**Warning:** The most common usage of multiple instances of the same generator running concurrently is not such interactions, but when the generator is producing its own values without input, perhaps from some independently connected resource. We'll talk more about value production in the next section.
 
-1. `string`, `number`, `boolean`, and `null` values all stringify for JSON basically the same as how they coerce to `string` values via the rules of the `ToString` abstract operation.
-2. If you pass an `object` value to `JSON.stringify(..)`, and that `object` has a `toJSON()` method on it, `toJSON()` is automatically called to (sort of) "coerce" the value to be *JSON-safe* before stringification.
+Let's briefly walk through the processing:
 
-### `ToNumber`
+1. Both instances of `*foo()` are started at the same time, and both `next()` calls reveal a `value` of `2` from the `yield 2` statements, respectively.
+2. `val2 * 10` is `2 * 10`, which is sent into the first generator instance `it1`, so that `x` gets value `20`. `z` is incremented from `1` to `2`, and then `20 * 2` is `yield`ed out, setting `val1` to `40`.
+3. `val1 * 5` is `40 * 5`, which is sent into the second generator instance `it2`, so that `x` gets value `200`. `z` is incremented again, from `2` to `3`, and then `200 * 3` is `yield`ed out, setting `val2` to `600`.
+4. `val2 / 2` is `600 / 2`, which is sent into the first generator instance `it1`, so that `y` gets value `300`, then printing out `20 300 3` for its `x y z` values, respectively.
+5. `val1 / 4` is `40 / 4`, which is sent into the second generator instance `it2`, so that `y` gets value `10`, then printing out `200 10 3` for its `x y z` values, respectively.
 
-If any non-`number` value is used in a way that requires it to be a `number`, such as a mathematical operation, the ES5 spec defines the `ToNumber` abstract operation in section 9.3.
+That's a "fun" example to run through in your mind. Did you keep it straight?
 
-For example, `true` becomes `1` and `false` becomes `0`. `undefined` becomes `NaN`, but (curiously) `null` becomes `0`.
+#### Interleaving
 
-`ToNumber` for a `string` value essentially works for the most part like the rules/syntax for numeric literals (see Chapter 3). If it fails, the result is `NaN` (instead of a syntax error as with `number` literals). One example difference is that `0`-prefixed octal numbers are not handled as octals (just as normal base-10 decimals) in this operation, though such octals are valid as `number` literals (see Chapter 2).
-
-**Note:** The differences between `number` literal grammar and `ToNumber` on a `string` value are subtle and highly nuanced, and thus will not be covered further here. Consult section 9.3.1 of the ES5 spec for more information.
-
-Objects (and arrays) will first be converted to their primitive value equivalent, and the resulting value (if a primitive but not already a `number`) is coerced to a `number` according to the `ToNumber` rules just mentioned.
-
-To convert to this primitive value equivalent, the `ToPrimitive` abstract operation (ES5 spec, section 9.1) will consult the value (using the internal `DefaultValue` operation -- ES5 spec, section 8.12.8) in question to see if it has a `valueOf()` method. If `valueOf()` is available and it returns a primitive value, *that* value is used for the coercion. If not, but `toString()` is available, it will provide the value for the coercion.
-
-If neither operation can provide a primitive value, a `TypeError` is thrown.
-
-As of ES5, you can create such a noncoercible object -- one without `valueOf()` and `toString()` -- if it has a `null` value for its `[[Prototype]]`, typically created with `Object.create(null)`. See the *this & Object Prototypes* title of this series for more information on `[[Prototype]]`s.
-
-**Note:** We cover how to coerce to `number`s later in this chapter in detail, but for this next code snippet, just assume the `Number(..)` function does so.
-
-Consider:
+Recall this scenario from the "Run-to-completion" section of Chapter 1:
 
 ```js
-var a = {
-	valueOf: function(){
-		return "42";
-	}
-};
+var a = 1;
+var b = 2;
 
-var b = {
-	toString: function(){
-		return "42";
-	}
-};
+function foo() {
+	a++;
+	b = b * a;
+	a = b + 3;
+}
 
-var c = [4,2];
-c.toString = function(){
-	return this.join( "" );	// "42"
-};
-
-Number( a );			// 42
-Number( b );			// 42
-Number( c );			// 42
-Number( "" );			// 0
-Number( [] );			// 0
-Number( [ "abc" ] );	// NaN
+function bar() {
+	b--;
+	a = 8 + b;
+	b = a * 2;
+}
 ```
 
-### `ToBoolean`
+With normal JS functions, of course either `foo()` can run completely first, or `bar()` can run completely first, but `foo()` cannot interleave its individual statements with `bar()`. So, there are only two possible outcomes to the preceding program.
 
-Next, let's have a little chat about how `boolean`s behave in JS. There's **lots of confusion and misconception** floating out there around this topic, so pay close attention!
-
-First and foremost, JS has actual keywords `true` and `false`, and they behave exactly as you'd expect of `boolean` values. It's a common misconception that the values `1` and `0` are identical to `true`/`false`. While that may be true in other languages, in JS the `number`s are `number`s and the `boolean`s are `boolean`s. You can coerce `1` to `true` (and vice versa) or `0` to `false` (and vice versa). But they're not the same.
-
-#### Falsy Values
-
-But that's not the end of the story. We need to discuss how values other than the two `boolean`s behave whenever you coerce *to* their `boolean` equivalent.
-
-All of JavaScript's values can be divided into two categories:
-
-1. values that will become `false` if coerced to `boolean`
-2. everything else (which will obviously become `true`)
-
-I'm not just being facetious. The JS spec defines a specific, narrow list of values that will coerce to `false` when coerced to a `boolean` value.
-
-How do we know what the list of values is? In the ES5 spec, section 9.2 defines a `ToBoolean` abstract operation, which says exactly what happens for all the possible values when you try to coerce them "to boolean."
-
-From that table, we get the following as the so-called "falsy" values list:
-
-* `undefined`
-* `null`
-* `false`
-* `+0`, `-0`, and `NaN`
-* `""`
-
-That's it. If a value is on that list, it's a "falsy" value, and it will coerce to `false` if you force a `boolean` coercion on it.
-
-By logical conclusion, if a value is *not* on that list, it must be on *another list*, which we call the "truthy" values list. But JS doesn't really define a "truthy" list per se. It gives some examples, such as saying explicitly that all objects are truthy, but mostly the spec just implies: **anything not explicitly on the falsy list is therefore truthy.**
-
-#### Falsy Objects
-
-Wait a minute, that section title even sounds contradictory. I literally *just said* the spec calls all objects truthy, right? There should be no such thing as a "falsy object."
-
-What could that possibly even mean?
-
-You might be tempted to think it means an object wrapper (see Chapter 3) around a falsy value (such as `""`, `0` or `false`). But don't fall into that *trap*.
-
-**Note:** That's a subtle specification joke some of you may get.
-
-Consider:
+However, with generators, clearly interleaving (even in the middle of statements!) is possible:
 
 ```js
-var a = new Boolean( false );
-var b = new Number( 0 );
-var c = new String( "" );
+var a = 1;
+var b = 2;
+
+function *foo() {
+	a++;
+	yield;
+	b = b * a;
+	a = (yield b) + 3;
+}
+
+function *bar() {
+	b--;
+	yield;
+	a = (yield 8) + b;
+	b = a * (yield 2);
+}
 ```
 
-We know all three values here are objects (see Chapter 3) wrapped around obviously falsy values. But do these objects behave as `true` or as `false`? That's easy to answer:
+Depending on what respective order the *iterators* controlling `*foo()` and `*bar()` are called, the preceding program could produce several different results. In other words, we can actually illustrate (in a sort of fake-ish way) the theoretical "threaded race conditions" circumstances discussed in Chapter 1, by interleaving the two generator interations over the same shared variables.
+
+First, let's make a helper called `step(..)` that controls an *iterator*:
 
 ```js
-var d = Boolean( a && b && c );
-
-d; // true
-```
-
-So, all three behave as `true`, as that's the only way `d` could end up as `true`.
-
-**Tip:** Notice the `Boolean( .. )` wrapped around the `a && b && c` expression -- you might wonder why that's there. We'll come back to that later in this chapter, so make a mental note of it. For a sneak-peek (trivia-wise), try for yourself what `d` will be if you just do `d = a && b && c` without the `Boolean( .. )` call!
-
-So, if "falsy objects" are **not just objects wrapped around falsy values**, what the heck are they?
-
-The tricky part is that they can show up in your JS program, but they're not actually part of JavaScript itself.
-
-**What!?**
-
-There are certain cases where browsers have created their own sort of *exotic* values behavior, namely this idea of "falsy objects," on top of regular JS semantics.
-
-A "falsy object" is a value that looks and acts like a normal object (properties, etc.), but when you coerce it to a `boolean`, it coerces to a `false` value.
-
-**Why!?**
-
-The most well-known case is `document.all`: an array-like (object) provided to your JS program *by the DOM* (not the JS engine itself), which exposes elements in your page to your JS program. It *used* to behave like a normal object--it would act truthy. But not anymore.
-
-`document.all` itself was never really "standard" and has long since been deprecated/abandoned.
-
-"Can't they just remove it, then?" Sorry, nice try. Wish they could. But there's far too many legacy JS code bases out there that rely on using it.
-
-So, why make it act falsy? Because coercions of `document.all` to `boolean` (like in `if` statements) were almost always used as a means of detecting old, nonstandard IE.
-
-IE has long since come up to standards compliance, and in many cases is pushing the web forward as much or more than any other browser. But all that old `if (document.all) { /* it's IE */ }` code is still out there, and much of it is probably never going away. All this legacy code is still assuming it's running in decade-old IE, which just leads to bad browsing experience for IE users.
-
-So, we can't remove `document.all` completely, but IE doesn't want `if (document.all) { .. }` code to work anymore, so that users in modern IE get new, standards-compliant code logic.
-
-"What should we do?" **"I've got it! Let's bastardize the JS type system and pretend that `document.all` is falsy!"
-
-Ugh. That sucks. It's a crazy gotcha that most JS developers don't understand. But the alternative (doing nothing about the above no-win problems) sucks *just a little bit more*.
-
-So... that's what we've got: crazy, nonstandard "falsy objects" added to JavaScript by the browsers. Yay!
-
-#### Truthy Values
-
-Back to the truthy list. What exactly are the truthy values? Remember: **a value is truthy if it's not on the falsy list.**
-
-Consider:
-
-```js
-var a = "false";
-var b = "0";
-var c = "''";
-
-var d = Boolean( a && b && c );
-
-d;
-```
-
-What value do you expect `d` to have here? It's gotta be either `true` or `false`.
-
-It's `true`. Why? Because despite the contents of those `string` values looking like falsy values, the `string` values themselves are all truthy, because `""` is the only `string` value on the falsy list.
-
-What about these?
-
-```js
-var a = [];				// empty array -- truthy or falsy?
-var b = {};				// empty object -- truthy or falsy?
-var c = function(){};	// empty function -- truthy or falsy?
-
-var d = Boolean( a && b && c );
-
-d;
-```
-
-Yep, you guessed it, `d` is still `true` here. Why? Same reason as before. Despite what it may seem like, `[]`, `{}`, and `function(){}` are *not* on the falsy list, and thus are truthy values.
-
-In other words, the truthy list is infinitely long. It's impossible to make such a list. You can only make a finite falsy list and consult *it*.
-
-Take five minutes, write the falsy list on a post-it note for your computer monitor, or memorize it if you prefer. Either way, you'll easily be able to construct a virtual truthy list whenever you need it by simply asking if it's on the falsy list or not.
-
-The importance of truthy and falsy is in understanding how a value will behave if you coerce it (either explicitly or implicitly) to a `boolean` value. Now that you have those two lists in mind, we can dive into coercion examples themselves.
-
-## Explicit Coercion
-
-*Explicit* coercion refers to type conversions that are obvious and explicit. There's a wide range of type conversion usage that clearly falls under the *explicit* coercion category for most developers.
-
-The goal here is to identify patterns in our code where we can make it clear and obvious that we're converting a value from one type to another, so as to not leave potholes for future developers to trip into. The more explicit we are, the more likely someone later will be able to read our code and understand without undue effort what our intent was.
-
-It would be hard to find any salient disagreements with *explicit* coercion, as it most closely aligns with how the commonly accepted practice of type conversion works in statically typed languages. As such, we'll take for granted (for now) that *explicit* coercion can be agreed upon to not be evil or controversial. We'll revisit this later, though.
-
-### Explicitly: Strings <--> Numbers
-
-We'll start with the simplest and perhaps most common coercion operation: coercing values between `string` and `number` representation.
-
-To coerce between `string`s and `number`s, we use the built-in `String(..)` and `Number(..)` functions (which we referred to as "native constructors" in Chapter 3), but **very importantly**, we do not use the `new` keyword in front of them. As such, we're not creating object wrappers.
-
-Instead, we're actually *explicitly coercing* between the two types:
-
-```js
-var a = 42;
-var b = String( a );
-
-var c = "3.14";
-var d = Number( c );
-
-b; // "42"
-d; // 3.14
-```
-
-`String(..)` coerces from any other value to a primitive `string` value, using the rules of the `ToString` operation discussed earlier. `Number(..)` coerces from any other value to a primitive `number` value, using the rules of the `ToNumber` operation discussed earlier.
-
-I call this *explicit* coercion because in general, it's pretty obvious to most developers that the end result of these operations is the applicable type conversion.
-
-In fact, this usage actually looks a lot like it does in some other statically typed languages.
-
-For example, in C/C++, you can say either `(int)x` or `int(x)`, and both will convert the value in `x` to an integer. Both forms are valid, but many prefer the latter, which kinda looks like a function call. In JavaScript, when you say `Number(x)`, it looks awfully similar. Does it matter that it's *actually* a function call in JS? Not really.
-
-Besides `String(..)` and `Number(..)`, there are other ways to "explicitly" convert these values between `string` and `number`:
-
-```js
-var a = 42;
-var b = a.toString();
-
-var c = "3.14";
-var d = +c;
-
-b; // "42"
-d; // 3.14
-```
-
-Calling `a.toString()` is ostensibly explicit (pretty clear that "toString" means "to a string"), but there's some hidden implicitness here. `toString()` cannot be called on a *primitive* value like `42`. So JS automatically "boxes" (see Chapter 3) `42` in an object wrapper, so that `toString()` can be called against the object. In other words, you might call it "explicitly implicit."
-
-`+c` here is showing the *unary operator* form (operator with only one operand) of the `+` operator. Instead of performing mathematic addition (or string concatenation -- see below), the unary `+` explicitly coerces its operand (`c`) to a `number` value.
-
-Is `+c` *explicit* coercion? Depends on your experience and perspective. If you know (which you do, now!) that unary `+` is explicitly intended for `number` coercion, then it's pretty explicit and obvious. However, if you've never seen it before, it can seem awfully confusing, implicit, with hidden side effects, etc.
-
-**Note:** The generally accepted perspective in the open-source JS community is that unary `+` is an accepted form of *explicit* coercion.
-
-Even if you really like the `+c` form, there are definitely places where it can look awfully confusing. Consider:
-
-```js
-var c = "3.14";
-var d = 5+ +c;
-
-d; // 8.14
-```
-
-The unary `-` operator also coerces like `+` does, but it also flips the sign of the number. However, you cannot put two `--` next to each other to unflip the sign, as that's parsed as the decrement operator. Instead, you would need to do: `- -"3.14"` with a space in between, and that would result in coercion to `3.14`.
-
-You can probably dream up all sorts of hideous combinations of binary operators (like `+` for addition) next to the unary form of an operator. Here's another crazy example:
-
-```js
-1 + - + + + - + 1;	// 2
-```
-
-You should strongly consider avoiding unary `+` (or `-`) coercion when it's immediately adjacent to other operators. While the above works, it would almost universally be considered a bad idea. Even `d = +c` (or `d =+ c` for that matter!) can far too easily be confused for `d += c`, which is entirely different!
-
-**Note:** Another extremely confusing place for unary `+` to be used adjacent to another operator would be the `++` increment operator and `--` decrement operator. For example: `a +++b`, `a + ++b`, and `a + + +b`. See "Expression Side-Effects" in Chapter 5 for more about `++`.
-
-Remember, we're trying to be explicit and **reduce** confusion, not make it much worse!
-
-#### `Date` To `number`
-
-Another common usage of the unary `+` operator is to coerce a `Date` object into a `number`, because the result is the unix timestamp (milliseconds elapsed since 1 January 1970 00:00:00 UTC) representation of the date/time value:
-
-```js
-var d = new Date( "Mon, 18 Aug 2014 08:53:06 CDT" );
-
-+d; // 1408369986000
-```
-
-The most common usage of this idiom is to get the current *now* moment as a timestamp, such as:
-
-```js
-var timestamp = +new Date();
-```
-
-**Note:** Some developers are aware of a peculiar syntactic "trick" in JavaScript, which is that the `()` set on a constructor call (a function called with `new`) is *optional* if there are no arguments to pass. So you may run across the `var timestamp = +new Date;` form. However, not all developers agree that omitting the `()` improves readability, as it's an uncommon syntax exception that only applies to the `new fn()` call form and not the regular `fn()` call form.
-
-But coercion is not the only way to get the timestamp out of a `Date` object. A noncoercion approach is perhaps even preferable, as it's even more explicit:
-
-```js
-var timestamp = new Date().getTime();
-// var timestamp = (new Date()).getTime();
-// var timestamp = (new Date).getTime();
-```
-
-But an *even more* preferable noncoercion option is to use the ES5 added `Date.now()` static function:
-
-```js
-var timestamp = Date.now();
-```
-
-And if you want to polyfill `Date.now()` into older browsers, it's pretty simple:
-
-```js
-if (!Date.now) {
-	Date.now = function() {
-		return +new Date();
+function step(gen) {
+	var it = gen();
+	var last;
+
+	return function() {
+		// whatever is `yield`ed out, just
+		// send it right back in the next time!
+		last = it.next( last ).value;
 	};
 }
 ```
 
-I'd recommend skipping the coercion forms related to dates. Use `Date.now()` for current *now* timestamps, and `new Date( .. ).getTime()` for getting a timestamp of a specific *non-now* date/time that you need to specify.
+`step(..)` initializes a generator to create its `it` *iterator*, then returns a function which, when called, advances the *iterator* by one step. Additionally, the previously `yield`ed out value is sent right back in at the *next* step. So, `yield 8` will just become `8` and `yield b` will just be `b` (whatever it was at the time of `yield`).
 
-#### The Curious Case of the `~`
-
-One coercive JS operator that is often overlooked and usually very confused is the tilde `~` operator (aka "bitwise NOT"). Many of those who even understand what it does will often times still want to avoid it. But sticking to the spirit of our approach in this book and series, let's dig into it to find out if `~` has anything useful to give us.
-
-In the "32-bit (Signed) Integers" section of Chapter 2, we covered how bitwise operators in JS are defined only for 32-bit operations, which means they force their operands to conform to 32-bit value representations. The rules for how this happens are controlled by the `ToInt32` abstract operation (ES5 spec, section 9.5).
-
-`ToInt32` first does a `ToNumber` coercion, which means if the value is `"123"`, it's going to first become `123` before the `ToInt32` rules are applied.
-
-While not *technically* coercion itself (since the type doesn't change!), using bitwise operators (like `|` or `~`) with certain special `number` values produces a coercive effect that results in a different `number` value.
-
-For example, let's first consider the `|` "bitwise OR" operator used in the otherwise no-op idiom `0 | x`, which (as Chapter 2 showed) essentially only does the `ToInt32` conversion:
+Now, just for fun, let's experiment to see the effects of interleaving these different chunks of `*foo()` and `*bar()`. We'll start with the boring base case, making sure `*foo()` totally finishes before `*bar()` (just like we did in Chapter 1):
 
 ```js
-0 | -0;			// 0
-0 | NaN;		// 0
-0 | Infinity;	// 0
-0 | -Infinity;	// 0
+// make sure to reset `a` and `b`
+a = 1;
+b = 2;
+
+var s1 = step( foo );
+var s2 = step( bar );
+
+// run `*foo()` completely first
+s1();
+s1();
+s1();
+
+// now run `*bar()`
+s2();
+s2();
+s2();
+s2();
+
+console.log( a, b );	// 11 22
 ```
 
-These special numbers aren't 32-bit representable (since they come from the 64-bit IEEE 754 standard -- see Chapter 2), so `ToInt32` just specifies `0` as the result from these values.
-
-It's debatable if `0 | __` is an *explicit* form of this coercive `ToInt32` operation or if it's more *implicit*. From the spec perspective, it's unquestionably *explicit*, but if you don't understand bitwise operations at this level, it can seem a bit more *implicitly* magical. Nevertheless, consistent with other assertions in this chapter, we will call it *explicit*.
-
-So, let's turn our attention back to `~`. The `~` operator first "coerces" to a 32-bit `number` value, and then performs a bitwise negation (flipping each bit's parity).
-
-**Note:** This is very similar to how `!` not only coerces its value to `boolean` but also flips its parity (see discussion of the "unary `!`" later).
-
-But... what!? Why do we care about bits being flipped? That's some pretty specialized, nuanced stuff. It's pretty rare for JS developers to need to reason about individual bits.
-
-Another way of thinking about the definition of `~` comes from old-school computer science/discrete Mathematics: `~` performs two's-complement. Great, thanks, that's totally clearer!
-
-Let's try again: `~x` is roughly the same as `-(x+1)`. That's weird, but slightly easier to reason about. So:
+The end result is `11` and `22`, just as it was in the Chapter 1 version. Now let's mix up the interleaving ordering and see how it changes the final values of `a` and `b`:
 
 ```js
-~42;	// -(42+1) ==> -43
+// make sure to reset `a` and `b`
+a = 1;
+b = 2;
+
+var s1 = step( foo );
+var s2 = step( bar );
+
+s2();		// b--;
+s2();		// yield 8
+s1();		// a++;
+s2();		// a = 8 + b;
+			// yield 2
+s1();		// b = b * a;
+			// yield b
+s1();		// a = b + 3;
+s2();		// b = a * 2;
 ```
 
-You're probably still wondering what the heck all this `~` stuff is about, or why it really matters for a coercion discussion. Let's quickly get to the point.
-
-Consider `-(x+1)`. What's the only value that you can perform that operation on that will produce a `0` (or `-0` technically!) result? `-1`. In other words, `~` used with a range of `number` values will produce a falsy (easily coercible to `false`) `0` value for the `-1` input value, and any other truthy `number` otherwise.
-
-Why is that relevant?
-
-`-1` is commonly called a "sentinel value," which basically means a value that's given an arbitrary semantic meaning within the greater set of values of its same type (`number`s). The C-language uses `-1` sentinel values for many functions that return `>= 0` values for "success" and `-1` for "failure."
-
-JavaScript adopted this precedent when defining the `string` operation `indexOf(..)`, which searches for a substring and if found returns its zero-based index position, or `-1` if not found.
-
-It's pretty common to try to use `indexOf(..)` not just as an operation to get the position, but as a `boolean` check of presence/absence of a substring in another `string`. Here's how developers usually perform such checks:
+Before I tell you the results, can you figure out what `a` and `b` are after the preceding program? No cheating!
 
 ```js
-var a = "Hello World";
-
-if (a.indexOf( "lo" ) >= 0) {	// true
-	// found it!
-}
-if (a.indexOf( "lo" ) != -1) {	// true
-	// found it
-}
-
-if (a.indexOf( "ol" ) < 0) {	// true
-	// not found!
-}
-if (a.indexOf( "ol" ) == -1) {	// true
-	// not found!
-}
+console.log( a, b );	// 12 18
 ```
 
-I find it kind of gross to look at `>= 0` or `== -1`. It's basically a "leaky abstraction," in that it's leaking underlying implementation behavior -- the usage of sentinel `-1` for "failure" -- into my code. I would prefer to hide such a detail.
+**Note:** As an exercise for the reader, try to see how many other combinations of results you can get back rearranging the order of the `s1()` and `s2()` calls. Don't forget you'll always need three `s1()` calls and four `s2()` calls. Recall the discussion earlier about matching `next()` with `yield` for the reasons why.
 
-And now, finally, we see why `~` could help us! Using `~` with `indexOf()` "coerces" (actually just transforms) the value **to be appropriately `boolean`-coercible**:
+You almost certainly won't want to intentionally create *this* level of interleaving confusion, as it creates incredibly difficult to understand code. But the exercise is interesting and instructive to understand more about how multiple generators can run concurrently in the same shared scope, because there will be places where this capability is quite useful.
+
+We'll discuss generator concurrency in more detail at the end of this chapter.
+
+## Generator'ing Values
+
+In the previous section, we mentioned an interesting use for generators, as a way to produce values. This is **not** the main focus in this chapter, but we'd be remiss if we didn't cover the basics, especially because this use case is essentially the origin of the name: generators.
+
+We're going to take a slight diversion into the topic of *iterators* for a bit, but we'll circle back to how they relate to generators and using a generator to *generate* values.
+
+### Producers and Iterators
+
+Imagine you're producing a series of values where each value has a definable relationship to the previous value. To do this, you're going to need a stateful producer that remembers the last value it gave out.
+
+You can implement something like that straightforwardly using a function closure (see the *Scope & Closures* title of this series):
 
 ```js
-var a = "Hello World";
+var gimmeSomething = (function(){
+	var nextVal;
 
-~a.indexOf( "lo" );			// -4   <-- truthy!
+	return function(){
+		if (nextVal === undefined) {
+			nextVal = 1;
+		}
+		else {
+			nextVal = (3 * nextVal) + 6;
+		}
 
-if (~a.indexOf( "lo" )) {	// true
-	// found it!
-}
+		return nextVal;
+	};
+})();
 
-~a.indexOf( "ol" );			// 0    <-- falsy!
-!~a.indexOf( "ol" );		// true
-
-if (!~a.indexOf( "ol" )) {	// true
-	// not found!
-}
+gimmeSomething();		// 1
+gimmeSomething();		// 9
+gimmeSomething();		// 33
+gimmeSomething();		// 105
 ```
 
-`~` takes the return value of `indexOf(..)` and transforms it: for the "failure" `-1` we get the falsy `0`, and every other value is truthy.
+**Note:** The `nextVal` computation logic here could have been simplified, but conceptually, we don't want to calculate the *next value* (aka `nextVal`) until the *next* `gimmeSomething()` call happens, because in general that could be a resource-leaky design for producers of more persistent or resource-limited values than simple `number`s.
 
-**Note:** The `-(x+1)` pseudo-algorithm for `~` would imply that `~-1` is `-0`, but actually it produces `0` because the underlying operation is actually bitwise, not mathematic.
+Generating an arbitrary number series isn't a terribly realistic example. But what if you were generating records from a data source? You could imagine much the same code.
 
-Technically, `if (~a.indexOf(..))` is still relying on *implicit* coercion of its resultant `0` to `false` or nonzero to `true`. But overall, `~` still feels to me more like an *explicit* coercion mechanism, as long as you know what it's intended to do in this idiom.
+In fact, this task is a very common design pattern, usually solved by iterators. An *iterator* is a well-defined interface for stepping through a series of values from a producer. The JS interface for iterators, as it is in most languages, is to call `next()` each time you want the next value from the producer.
 
-I find this to be cleaner code than the previous `>= 0` / `== -1` clutter.
-
-##### Truncating Bits
-
-There's one more place `~` may show up in code you run across: some developers use the double tilde `~~` to truncate the decimal part of a `number` (i.e., "coerce" it to a whole number "integer"). It's commonly (though mistakingly) said this is the same result as calling `Math.floor(..)`.
-
-How `~~` works is that the first `~` applies the `ToInt32` "coercion" and does the bitwise flip, and then the second `~` does another bitwise flip, flipping all the bits back to the original state. The end result is just the `ToInt32` "coercion" (aka truncation).
-
-**Note:** The bitwise double-flip of `~~` is very similar to the parity double-negate `!!` behavior, explained in the "Explicitly: * --> Boolean" section later.
-
-However, `~~` needs some caution/clarification. First, it only works reliably on 32-bit values. But more importantly, it doesn't work the same on negative numbers as `Math.floor(..)` does!
+We could implement the standard *iterator* interface for our number series producer:
 
 ```js
-Math.floor( -49.6 );	// -50
-~~-49.6;				// -49
+var something = (function(){
+	var nextVal;
+
+	return {
+		// needed for `for..of` loops
+		[Symbol.iterator]: function(){ return this; },
+
+		// standard iterator interface method
+		next: function(){
+			if (nextVal === undefined) {
+				nextVal = 1;
+			}
+			else {
+				nextVal = (3 * nextVal) + 6;
+			}
+
+			return { done:false, value:nextVal };
+		}
+	};
+})();
+
+something.next().value;		// 1
+something.next().value;		// 9
+something.next().value;		// 33
+something.next().value;		// 105
 ```
 
-Setting the `Math.floor(..)` difference aside, `~~x` can truncate to a (32-bit) integer. But so does `x | 0`, and seemingly with (slightly) *less effort*.
+**Note:** We'll explain why we need the `[Symbol.iterator]: ..` part of this code snippet in the "Iterables" section. Syntactically though, two ES6 features are at play. First, the `[ .. ]` syntax is called a *computed property name* (see the *this & Object Prototypes* title of this series). It's a way in an object literal definition to specify an expression and use the result of that expression as the name for the property. Next, `Symbol.iterator` is one of ES6's predefined special `Symbol` values (see the *ES6 & Beyond* title of this book series).
 
-So, why might you choose `~~x` over `x | 0`, then? Operator precedence (see Chapter 5):
+The `next()` call returns an object with two properties: `done` is a `boolean` value signaling the *iterator's* complete status; `value` holds the iteration value.
 
-```js
-~~1E20 / 10;		// 166199296
-
-1E20 | 0 / 10;		// 1661992960
-(1E20 | 0) / 10;	// 166199296
-```
-
-Just as with all other advice here, use `~` and `~~` as explicit mechanisms for "coercion" and value transformation only if everyone who reads/writes such code is properly aware of how these operators work!
-
-### Explicitly: Parsing Numeric Strings
-
-A similar outcome to coercing a `string` to a `number` can be achieved by parsing a `number` out of a `string`'s character contents. There are, however, distinct differences between this parsing and the type conversion we examined above.
-
-Consider:
+ES6 also adds the `for..of` loop, which means that a standard *iterator* can automatically be consumed with native loop syntax:
 
 ```js
-var a = "42";
-var b = "42px";
+for (var v of something) {
+	console.log( v );
 
-Number( a );	// 42
-parseInt( a );	// 42
-
-Number( b );	// NaN
-parseInt( b );	// 42
-```
-
-Parsing a numeric value out of a string is *tolerant* of non-numeric characters -- it just stops parsing left-to-right when encountered -- whereas coercion is *not tolerant* and fails resulting in the `NaN` value.
-
-Parsing should not be seen as a substitute for coercion. These two tasks, while similar, have different purposes. Parse a `string` as a `number` when you don't know/care what other non-numeric characters there may be on the right-hand side. Coerce a `string` (to a `number`) when the only acceptable values are numeric and something like `"42px"` should be rejected as a `number`.
-
-**Tip:** `parseInt(..)` has a twin, `parseFloat(..)`, which (as it sounds) pulls out a floating-point number from a string.
-
-Don't forget that `parseInt(..)` operates on `string` values. It makes absolutely no sense to pass a `number` value to `parseInt(..)`. Nor would it make sense to pass any other type of value, like `true`, `function(){..}` or `[1,2,3]`.
-
-If you pass a non-`string`, the value you pass will automatically be coerced to a `string` first (see "`ToString`" earlier), which would clearly be a kind of hidden *implicit* coercion. It's a really bad idea to rely upon such a behavior in your program, so never use `parseInt(..)` with a non-`string` value.
-
-Prior to ES5, another gotcha existed with `parseInt(..)`, which was the source of many JS programs' bugs. If you didn't pass a second argument to indicate which numeric base (aka radix) to use for interpreting the numeric `string` contents, `parseInt(..)` would look at the beginning character(s) to make a guess.
-
-If the first two characters were `"0x"` or `"0X"`, the guess (by convention) was that you wanted to interpret the `string` as a hexadecimal (base-16) `number`. Otherwise, if the first character was `"0"`, the guess (again, by convention) was that you wanted to interpret the `string` as an octal (base-8) `number`.
-
-Hexadecimal `string`s (with the leading `0x` or `0X`) aren't terribly easy to get mixed up. But the octal number guessing proved devilishly common. For example:
-
-```js
-var hour = parseInt( selectedHour.value );
-var minute = parseInt( selectedMinute.value );
-
-console.log( "The time you selected was: " + hour + ":" + minute);
-```
-
-Seems harmless, right? Try selecting `08` for the hour and `09` for the minute. You'll get `0:0`. Why? because neither `8` nor `9` are valid characters in octal base-8.
-
-The pre-ES5 fix was simple, but so easy to forget: **always pass `10` as the second argument**. This was totally safe:
-
-```js
-var hour = parseInt( selectedHour.value, 10 );
-var minute = parseInt( selectedMiniute.value, 10 );
-```
-
-As of ES5, `parseInt(..)` no longer guesses octal. Unless you say otherwise, it assumes base-10 (or base-16 for `"0x"` prefixes). That's much nicer. Just be careful if your code has to run in pre-ES5 environments, in which case you still need to pass `10` for the radix.
-
-#### Parsing Non-Strings
-
-One somewhat infamous example of `parseInt(..)`'s behavior is highlighted in a sarcastic joke post a few years ago, poking fun at this JS behavior:
-
-```js
-parseInt( 1/0, 19 ); // 18
-```
-
-The assumptive (but totally invalid) assertion was, "If I pass in Infinity, and parse an integer out of that, I should get Infinity back, not 18." Surely, JS must be crazy for this outcome, right?
-
-Though this example is obviously contrived and unreal, let's indulge the madness for a moment and examine whether JS really is that crazy.
-
-First off, the most obvious sin committed here is to pass a non-`string` to `parseInt(..)`. That's a no-no. Do it and you're asking for trouble. But even if you do, JS politely coerces what you pass in into a `string` that it can try to parse.
-
-Some would argue that this is unreasonable behavior, and that `parseInt(..)` should refuse to operate on a non-`string` value. Should it perhaps throw an error? That would be very Java-like, frankly. I shudder at thinking JS should start throwing errors all over the place so that `try..catch` is needed around almost every line.
-
-Should it return `NaN`? Maybe. But... what about:
-
-```js
-parseInt( new String( "42") );
-```
-
-Should that fail, too? It's a non-`string` value. If you want that `String` object wrapper to be unboxed to `"42"`, then is it really so unusual for `42` to first become `"42"` so that `42` can be parsed back out?
-
-I would argue that this half-*explicit*, half-*implicit* coercion that can occur can often be a very helpful thing. For example:
-
-```js
-var a = {
-	num: 21,
-	toString: function() { return String( this.num * 2 ); }
-};
-
-parseInt( a ); // 42
-```
-
-The fact that `parseInt(..)` forcibly coerces its value to a `string` to perform the parse on is quite sensible. If you pass in garbage, and you get garbage back out, don't blame the trash can -- it just did its job faithfully.
-
-So, if you pass in a value like `Infinity` (the result of `1 / 0` obviously), what sort of `string` representation would make the most sense for its coercion? Only two reasonable choices come to mind: `"Infinity"` and `"∞"`. JS chose `"Infinity"`. I'm glad it did.
-
-I think it's a good thing that **all values** in JS have some sort of default `string` representation, so that they aren't mysterious black boxes that we can't debug and reason about.
-
-Now, what about base-19? Obviously, completely bogus and contrived. No real JS programs use base-19. It's absurd. But again, let's indulge the ridiculousness. In base-19, the valid numeric characters are `0` - `9` and `a` - `i` (case insensitive).
-
-So, back to our `parseInt( 1/0, 19 )` example. It's essentially `parseInt( "Infinity", 19 )`. How does it parse? The first character is `"I"`, which is value `18` in the silly base-19. The second character `"n"` is not in the valid set of numeric characters, and as such the parsing simply politely stops, just like when it ran across `"p"` in `"42px"`.
-
-The result? `18`. Exactly like it sensibly should be. The behaviors involved to get us there, and not to an error or to `Infinity` itself, are **very important** to JS, and should not be so easily discarded.
-
-Other examples of this behavior with `parseInt(..)` that may be surprising but are quite sensible include:
-
-```js
-parseInt( 0.000008 );		// 0   ("0" from "0.000008")
-parseInt( 0.0000008 );		// 8   ("8" from "8e-7")
-parseInt( false, 16 );		// 250 ("fa" from "false")
-parseInt( parseInt, 16 );	// 15  ("f" from "function..")
-
-parseInt( "0x10" );			// 16
-parseInt( "103", 2 );		// 2
-```
-
-`parseInt(..)` is actually pretty predictable and consistent in its behavior. If you use it correctly, you'll get sensible results. If you use it incorrectly, the crazy results you get are not the fault of JavaScript.
-
-### Explicitly: * --> Boolean
-
-Now, let's examine coercing from any non-`boolean` value to a `boolean`.
-
-Just like with `String(..)` and `Number(..)` above, `Boolean(..)` (without the `new`, of course!) is an explicit way of forcing the `ToBoolean` coercion:
-
-```js
-var a = "0";
-var b = [];
-var c = {};
-
-var d = "";
-var e = 0;
-var f = null;
-var g;
-
-Boolean( a ); // true
-Boolean( b ); // true
-Boolean( c ); // true
-
-Boolean( d ); // false
-Boolean( e ); // false
-Boolean( f ); // false
-Boolean( g ); // false
-```
-
-While `Boolean(..)` is clearly explicit, it's not at all common or idiomatic.
-
-Just like the unary `+` operator coerces a value to a `number` (see above), the unary `!` negate operator explicitly coerces a value to a `boolean`. The *problem* is that it also flips the value from truthy to falsy or vice versa. So, the most common way JS developers explicitly coerce to `boolean` is to use the `!!` double-negate operator, because the second `!` will flip the parity back to the original:
-
-```js
-var a = "0";
-var b = [];
-var c = {};
-
-var d = "";
-var e = 0;
-var f = null;
-var g;
-
-!!a;	// true
-!!b;	// true
-!!c;	// true
-
-!!d;	// false
-!!e;	// false
-!!f;	// false
-!!g;	// false
-```
-
-Any of these `ToBoolean` coercions would happen *implicitly* without the `Boolean(..)` or `!!`, if used in a `boolean` context such as an `if (..) ..` statement. But the goal here is to explicitly force the value to a `boolean` to make it clearer that the `ToBoolean` coercion is intended.
-
-Another example use-case for explicit `ToBoolean` coercion is if you want to force a `true`/`false` value coercion in the JSON serialization of a data structure:
-
-```js
-var a = [
-	1,
-	function(){ /*..*/ },
-	2,
-	function(){ /*..*/ }
-];
-
-JSON.stringify( a ); // "[1,null,2,null]"
-
-JSON.stringify( a, function(key,val){
-	if (typeof val == "function") {
-		// force `ToBoolean` coercion of the function
-		return !!val;
+	// don't let the loop run forever!
+	if (v > 500) {
+		break;
 	}
-	else {
-		return val;
-	}
-} );
-// "[1,true,2,true]"
-```
-
-If you come to JavaScript from Java, you may recognize this idiom:
-
-```js
-var a = 42;
-
-var b = a ? true : false;
-```
-
-The `? :` ternary operator will test `a` for truthiness, and based on that test will either assign `true` or `false` to `b`, accordingly.
-
-On its surface, this idiom looks like a form of *explicit* `ToBoolean`-type coercion, since it's obvious that only either `true` or `false` come out of the operation.
-
-However, there's a hidden *implicit* coercion, in that the `a` expression has to first be coerced to `boolean` to perform the truthiness test. I'd call this idiom "explicitly implicit." Furthermore, I'd suggest **you should avoid this idiom completely** in JavaScript. It offers no real benefit, and worse, masquerades as something it's not.
-
-`Boolean(a)` and `!!a` are far better as *explicit* coercion options.
-
-## Implicit Coercion
-
-*Implicit* coercion refers to type conversions that are hidden, with non-obvious side-effects that implicitly occur from other actions. In other words, *implicit coercions* are any type conversions that aren't obvious (to you).
-
-While it's clear what the goal of *explicit* coercion is (making code explicit and more understandable), it might be *too* obvious that *implicit* coercion has the opposite goal: making code harder to understand.
-
-Taken at face value, I believe that's where much of the ire towards coercion comes from. The majority of complaints about "JavaScript coercion" are actually aimed (whether they realize it or not) at *implicit* coercion.
-
-**Note:** Douglas Crockford, author of *"JavaScript: The Good Parts"*, has claimed in many conference talks and writings that JavaScript coercion should be avoided. But what he seems to mean is that *implicit* coercion is bad (in his opinion). However, if you read his own code, you'll find plenty of examples of coercion, both *implicit* and *explicit*! In truth, his angst seems to primarily be directed at the `==` operation, but as you'll see in this chapter, that's only part of the coercion mechanism.
-
-So, **is implicit coercion** evil? Is it dangerous? Is it a flaw in JavaScript's design? Should we avoid it at all costs?
-
-I bet most of you readers are inclined to enthusiastically cheer, "Yes!"
-
-**Not so fast.** Hear me out.
-
-Let's take a different perspective on what *implicit* coercion is, and can be, than just that it's "the opposite of the good explicit kind of coercion." That's far too narrow and misses an important nuance.
-
-Let's define the goal of *implicit* coercion as: to reduce verbosity, boilerplate, and/or unnecessary implementation detail that clutters up our code with noise that distracts from the more important intent.
-
-### Simplifying Implicitly
-
-Before we even get to JavaScript, let me suggest something pseudo-code'ish from some theoretical strongly typed language to illustrate:
-
-```js
-SomeType x = SomeType( AnotherType( y ) )
-```
-
-In this example, I have some arbitrary type of value in `y` that I want to convert to the `SomeType` type. The problem is, this language can't go directly from whatever `y` currently is to `SomeType`. It needs an intermediate step, where it first converts to `AnotherType`, and then from `AnotherType` to `SomeType`.
-
-Now, what if that language (or definition you could create yourself with the language) *did* just let you say:
-
-```js
-SomeType x = SomeType( y )
-```
-
-Wouldn't you generally agree that we simplified the type conversion here to reduce the unnecessary "noise" of the intermediate conversion step? I mean, is it *really* all that important, right here at this point in the code, to see and deal with the fact that `y` goes to `AnotherType` first before then going to `SomeType`?
-
-Some would argue, at least in some circumstances, yes. But I think an equal argument can be made of many other circumstances that here, the simplification **actually aids in the readability of the code** by abstracting or hiding away such details, either in the language itself or in our own abstractions.
-
-Undoubtedly, behind the scenes, somewhere, the intermediate conversion step is still happening. But if that detail is hidden from view here, we can just reason about getting `y` to type `SomeType` as an generic operation and hide the messy details.
-
-While not a perfect analogy, what I'm going to argue throughout the rest of this chapter is that JS *implicit* coercion can be thought of as providing a similar aid to your code.
-
-But, **and this is very important**, that is not an unbounded, absolute statement. There are definitely plenty of *evils* lurking around *implicit* coercion, that will harm your code much more than any potential readability improvements. Clearly, we have to learn how to avoid such constructs so we don't poison our code with all manner of bugs.
-
-Many developers believe that if a mechanism can do some useful thing **A** but can also be abused or misused to do some awful thing **Z**, then we should throw out that mechanism altogether, just to be safe.
-
-My encouragement to you is: don't settle for that. Don't "throw the baby out with the bathwater." Don't assume *implicit* coercion is all bad because all you think you've ever seen is its "bad parts." I think there are "good parts" here, and I want to help and inspire more of you to find and embrace them!
-
-### Implicitly: Strings <--> Numbers
-
-Earlier in this chapter, we explored *explicitly* coercing between `string` and `number` values. Now, let's explore the same task but with *implicit* coercion approaches. But before we do, we have to examine some nuances of operations that will *implicitly* force coercion.
-
-The `+` operator is overloaded to serve the purposes of both `number` addition and `string` concatenation. So how does JS know which type of operation you want to use? Consider:
-
-```js
-var a = "42";
-var b = "0";
-
-var c = 42;
-var d = 0;
-
-a + b; // "420"
-c + d; // 42
-```
-
-What's different that causes `"420"` vs `42`? It's a common misconception that the difference is whether one or both of the operands is a `string`, as that means `+` will assume `string` concatenation. While that's partially true, it's more complicated than that.
-
-Consider:
-
-```js
-var a = [1,2];
-var b = [3,4];
-
-a + b; // "1,23,4"
-```
-
-Neither of these operands is a `string`, but clearly they were both coerced to `string`s and then the `string` concatenation kicked in. So what's really going on?
-
-(**Warning:** deeply nitty gritty spec-speak coming, so skip the next two paragraphs if that intimidates you!)
-
------
-
-According to ES5 spec section 11.6.1, the `+` algorithm (when an `object` value is an operand) will concatenate if either operand is either already a `string`, or if the following steps produce a `string` representation. So, when `+` receives an `object` (including `array`) for either operand, it first calls the `ToPrimitive` abstract operation (section 9.1) on the value, which then calls the `[[DefaultValue]]` algorithm (section 8.12.8) with a context hint of `number`.
-
-If you're paying close attention, you'll notice that this operation is now identical to how the `ToNumber` abstract operation handles `object`s (see the "`ToNumber`"" section earlier). The `valueOf()` operation on the `array` will fail to produce a simple primitive, so it then falls to a `toString()` representation. The two `array`s thus become `"1,2"` and `"3,4"`, respectively. Now, `+` concatenates the two `string`s as you'd normally expect: `"1,23,4"`.
-
------
-
-Let's set aside those messy details and go back to an earlier, simplified explanation: if either operand to `+` is a `string` (or becomes one with the above steps!), the operation will be `string` concatenation. Otherwise, it's always numeric addition.
-
-**Note:** A commonly cited coercion gotcha is `[] + {}` vs. `{} + []`, as those two expressions result, respectively, in `"[object Object]"` and `0`. There's more to it, though, and we cover those details in "Blocks" in Chapter 5.
-
-What's that mean for *implicit* coercion?
-
-You can coerce a `number` to a `string` simply by "adding" the `number` and the `""` empty `string`:
-
-```js
-var a = 42;
-var b = a + "";
-
-b; // "42"
-```
-
-**Tip:** Numeric addition with the `+` operator is commutative, which means `2 + 3` is the same as `3 + 2`. String concatenation with `+` is obviously not generally commutative, **but** with the specific case of `""`, it's effectively commutative, as `a + ""` and `"" + a` will produce the same result.
-
-It's extremely common/idiomatic to (*implicitly*) coerce `number` to `string` with a `+ ""` operation. In fact, interestingly, even some of the most vocal critics of *implicit* coercion still use that approach in their own code, instead of one of its *explicit* alternatives.
-
-**I think this is a great example** of a useful form in *implicit* coercion, despite how frequently the mechanism gets criticized!
-
-Comparing this *implicit* coercion of `a + ""` to our earlier example of `String(a)` *explicit* coercion, there's one additional quirk to be aware of. Because of how the `ToPrimitive` abstract operation works, `a + ""` invokes `valueOf()` on the `a` value, whose return value is then finally converted to a `string` via the internal `ToString` abstract operation. But `String(a)` just invokes `toString()` directly.
-
-Both approaches ultimately result in a `string`, but if you're using an `object` instead of a regular primitive `number` value, you may not necessarily get the *same* `string` value!
-
-Consider:
-
-```js
-var a = {
-	valueOf: function() { return 42; },
-	toString: function() { return 4; }
-};
-
-a + "";			// "42"
-
-String( a );	// "4"
-```
-
-Generally, this sort of gotcha won't bite you unless you're really trying to create confusing data structures and operations, but you should be careful if you're defining both your own `valueOf()` and `toString()` methods for some `object`, as how you coerce the value could affect the outcome.
-
-What about the other direction? How can we *implicitly coerce* from `string` to `number`?
-
-```
-var a = "3.14";
-var b = a - 0;
-
-b; // 3.14
-```
-
-The `-` operator is defined only for numeric subtraction, so `a - 0` forces `a`'s value to be coerced to a `number`. While far less common, `a * 1` or `a / 1` would accomplish the same result, as those operators are also only defined for numeric operations.
-
-What about `object` values with the `-` operator? Similar story as for `+` above:
-
-```js
-var a = [3];
-var b = [1];
-
-a - b; // 2
-```
-
-Both `array` values have to become `number`s, but they end up first being coerced to `strings` (using the expected `toString()` serialization), and then are coerced to `number`s, for the `-` subtraction to perform on.
-
-So, is *implicit* coercion of `string` and `number` values the ugly evil you've always heard horror stories about? I don't personally think so.
-
-Compare `b = String(a)` (*explicit*) to `b = a + ""` (*implicit*). I think cases can be made for both approaches being useful in your code. Certainly `b = a + ""` is quite a bit more common in JS programs, proving its own utility regardless of *feelings* about the merits or hazards of *implicit* coercion in general.
-
-### Implicitly: Booleans --> Numbers
-
-I think a case where *implicit* coercion can really shine is in simplifying certain types of complicated `boolean` logic into simple numeric addition. Of course, this is not a general-purpose technique, but a specific solution for specific cases.
-
-Consider:
-
-```js
-function onlyOne(a,b,c) {
-	return !!((a && !b && !c) ||
-		(!a && b && !c) || (!a && !b && c));
 }
-
-var a = true;
-var b = false;
-
-onlyOne( a, b, b );	// true
-onlyOne( b, a, b );	// true
-
-onlyOne( a, b, a );	// false
+// 1 9 33 105 321 969
 ```
 
-This `onlyOne(..)` utility should only return `true` if exactly one of the arguments is `true` / truthy. It's using *implicit* coercion on the truthy checks and *explicit* coercion on the others, including the final return value.
+**Note:** Because our `something` *iterator* always returns `done:false`, this `for..of` loop would run forever, which is why we put the `break` conditional in. It's totally OK for iterators to be never-ending, but there are also cases where the *iterator* will run over a finite set of values and eventually return a `done:true`.
 
-But what if we needed that utility to be able to handle four, five, or twenty flags in the same way? It's pretty difficult to imagine implementing code that would handle all those permutations of comparisons.
+The `for..of` loop automatically calls `next()` for each iteration -- it doesn't pass any values in to the `next()` -- and it will automatically terminate on receiving a `done:true`. It's quite handy for looping over a set of data.
 
-But here's where coercing the `boolean` values to `number`s (`0` or `1`, obviously) can greatly help:
+Of course, you could manually loop over iterators, calling `next()` and checking for the `done:true` condition to know when to stop:
 
 ```js
-function onlyOne() {
-	var sum = 0;
-	for (var i=0; i < arguments.length; i++) {
-		// skip falsy values. same as treating
-		// them as 0's, but avoids NaN's.
-		if (arguments[i]) {
-			sum += arguments[i];
+for (
+	var ret;
+	(ret = something.next()) && !ret.done;
+) {
+	console.log( ret.value );
+
+	// don't let the loop run forever!
+	if (ret.value > 500) {
+		break;
+	}
+}
+// 1 9 33 105 321 969
+```
+
+**Note:** This manual `for` approach is certainly uglier than the ES6 `for..of` loop syntax, but its advantage is that it affords you the opportunity to pass in values to the `next(..)` calls if necessary.
+
+In addition to making your own *iterators*, many built-in data structures in JS (as of ES6), like `array`s, also have default *iterators*:
+
+```js
+var a = [1,3,5,7,9];
+
+for (var v of a) {
+	console.log( v );
+}
+// 1 3 5 7 9
+```
+
+The `for..of` loop asks `a` for its *iterator*, and automatically uses it to iterate over `a`'s values.
+
+**Note:** It may seem a strange omission by ES6, but regular `object`s intentionally do not come with a default *iterator* the way `array`s do. The reasons go deeper than we will cover here. If all you want is to iterate over the properties of an object (with no particular guarantee of ordering), `Object.keys(..)` returns an `array`, which can then be used like `for (var k of Object.keys(obj)) { ..`. Such a `for..of` loop over an object's keys would be similar to a `for..in` loop, except that `Object.keys(..)` does not include properties from the `[[Prototype]]` chain while `for..in` does (see the *this & Object Prototypes* title of this series).
+
+### Iterables
+
+The `something` object in our running example is called an *iterator*, as it has the `next()` method on its interface. But a closely related term is *iterable*, which is an `object` that **contains** an *iterator* that can iterate over its values.
+
+As of ES6, the way to retrieve an *iterator* from an *iterable* is that the *iterable* must have a function on it, with the name being the special ES6 symbol value `Symbol.iterator`. When this function is called, it returns an *iterator*. Though not required, generally each call should return a fresh new *iterator*.
+
+`a` in the previous snippet is an *iterable*. The `for..of` loop automatically calls its `Symbol.iterator` function to construct an *iterator*. But we could of course call the function manually, and use the *iterator* it returns:
+
+```js
+var a = [1,3,5,7,9];
+
+var it = a[Symbol.iterator]();
+
+it.next().value;	// 1
+it.next().value;	// 3
+it.next().value;	// 5
+..
+```
+
+In the previous code listing that defined `something`, you may have noticed this line:
+
+```js
+[Symbol.iterator]: function(){ return this; }
+```
+
+That little bit of confusing code is making the `something` value -- the interface of the `something` *iterator* -- also an *iterable*; it's now both an *iterable* and an *iterator*. Then, we pass `something` to the `for..of` loop:
+
+```js
+for (var v of something) {
+	..
+}
+```
+
+The `for..of` loop expects `something` to be an *iterable*, so it looks for and calls its `Symbol.iterator` function. We defined that function to simply `return this`, so it just gives itself back, and the `for..of` loop is none the wiser.
+
+### Generator Iterator
+
+Let's turn our attention back to generators, in the context of *iterators*. A generator can be treated as a producer of values that we extract one at a time through an *iterator* interface's `next()` calls.
+
+So, a generator itself is not technically an *iterable*, though it's very similar -- when you execute the generator, you get an *iterator* back:
+
+```js
+function *foo(){ .. }
+
+var it = foo();
+```
+
+We can implement the `something` infinite number series producer from earlier with a generator, like this:
+
+```js
+function *something() {
+	var nextVal;
+
+	while (true) {
+		if (nextVal === undefined) {
+			nextVal = 1;
+		}
+		else {
+			nextVal = (3 * nextVal) + 6;
+		}
+
+		yield nextVal;
+	}
+}
+```
+
+**Note:** A `while..true` loop would normally be a very bad thing to include in a real JS program, at least if it doesn't have a `break` or `return` in it, as it would likely run forever, synchronously, and block/lock-up the browser UI. However, in a generator, such a loop is generally totally OK if it has a `yield` in it, as the generator will pause at each iteration, `yield`ing back to the main program and/or to the event loop queue. To put it glibly, "generators put the `while..true` back in JS programming!"
+
+That's a fair bit cleaner and simpler, right? Because the generator pauses at each `yield`, the state (scope) of the function `*something()` is kept around, meaning there's no need for the closure boilerplate to preserve variable state across calls.
+
+Not only is it simpler code -- we don't have to make our own *iterator* interface -- it actually is more reason-able code, because it more clearly expresses the intent. For example, the `while..true` loop tells us the generator is intended to run forever -- to keep *generating* values as long as we keep asking for them.
+
+And now we can use our shiny new `*something()` generator with a `for..of` loop, and you'll see it works basically identically:
+
+```js
+for (var v of something()) {
+	console.log( v );
+
+	// don't let the loop run forever!
+	if (v > 500) {
+		break;
+	}
+}
+// 1 9 33 105 321 969
+```
+
+But don't skip over `for (var v of something()) ..`! We didn't just reference `something` as a value like in earlier examples, but instead called the `*something()` generator to get its *iterator* for the `for..of` loop to use.
+
+If you're paying close attention, two questions may arise from this interaction between the generator and the loop:
+
+* Why couldn't we say `for (var v of something) ..`? Because `something` here is a generator, which is not an *iterable*. We have to call `something()` to construct a producer for the `for..of` loop to iterate over.
+* The `something()` call produces an *iterator*, but the `for..of` loop wants an *iterable*, right? Yep. The generator's *iterator* also has a `Symbol.iterator` function on it, which basically does a `return this`, just like the `something` *iterable* we defined earlier. In other words, a generator's *iterator* is also an *iterable*!
+
+#### Stopping the Generator
+
+In the previous example, it would appear the *iterator* instance for the `*something()` generator was basically left in a suspended state forever after the `break` in the loop was called.
+
+But there's a hidden behavior that takes care of that for you. "Abnormal completion" (i.e., "early termination") of the `for..of` loop -- generally caused by a `break`, `return`, or an uncaught exception -- sends a signal to the generator's *iterator* for it to terminate.
+
+**Note:** Technically, the `for..of` loop also sends this signal to the *iterator* at the normal completion of the loop. For a generator, that's essentially a moot operation, as the generator's *iterator* had to complete first so the `for..of` loop completed. However, custom *iterators* might desire to receive this additional signal from `for..of` loop consumers.
+
+While a `for..of` loop will automatically send this signal, you may wish to send the signal manually to an *iterator*; you do this by calling `return(..)`.
+
+If you specify a `try..finally` clause inside the generator, it will always be run even when the generator is externally completed. This is useful if you need to clean up resources (database connections, etc.):
+
+```js
+function *something() {
+	try {
+		var nextVal;
+
+		while (true) {
+			if (nextVal === undefined) {
+				nextVal = 1;
+			}
+			else {
+				nextVal = (3 * nextVal) + 6;
+			}
+
+			yield nextVal;
 		}
 	}
-	return sum == 1;
-}
-
-var a = true;
-var b = false;
-
-onlyOne( b, a );				// true
-onlyOne( b, a, b, b, b );		// true
-
-onlyOne( b, b );				// false
-onlyOne( b, a, b, b, b, a );	// false
-```
-
-**Note:** Of course, instead of the `for` loop in `onlyOne(..)`, you could more tersely use the ES5 `reduce(..)` utility, but I didn't want to obscure the concepts.
-
-What we're doing here is relying on the `1` for `true`/truthy coercions, and numerically adding them all up. `sum += arguments[i]` uses *implicit* coercion to make that happen. If one and only one value in the `arguments` list is `true`, then the numeric sum will be `1`, otherwise the sum will not be `1` and thus the desired condition is not met.
-
-We could of course do this with *explicit* coercion instead:
-
-```js
-function onlyOne() {
-	var sum = 0;
-	for (var i=0; i < arguments.length; i++) {
-		sum += Number( !!arguments[i] );
+	// cleanup clause
+	finally {
+		console.log( "cleaning up!" );
 	}
-	return sum === 1;
 }
 ```
 
-We first use `!!arguments[i]` to force the coercion of the value to `true` or `false`. That's so you could pass non-`boolean` values in, like `onlyOne( "42", 0 )`, and it would still work as expected (otherwise you'd end up with `string` concatenation and the logic would be incorrect).
-
-Once we're sure it's a `boolean`, we do another *explicit* coercion with `Number(..)` to make sure the value is `0` or `1`.
-
-Is the *explicit* coercion form of this utility "better"? It does avoid the `NaN` trap as explained in the code comments. But, ultimately, it depends on your needs. I personally think the former version, relying on *implicit* coercion is more elegant (if you won't be passing `undefined` or `NaN`), and the *explicit* version is needlessly more verbose.
-
-But as with almost everything we're discussing here, it's a judgment call.
-
-**Note:** Regardless of *implicit* or *explicit* approaches, you could easily make `onlyTwo(..)` or `onlyFive(..)` variations by simply changing the final comparison from `1`, to `2` or `5`, respectively. That's drastically easier than adding a bunch of `&&` and `||` expressions. So, generally, coercion is very helpful in this case.
-
-### Implicitly: * --> Boolean
-
-Now, let's turn our attention to *implicit* coercion to `boolean` values, as it's by far the most common and also by far the most potentially troublesome.
-
-Remember, *implicit* coercion is what kicks in when you use a value in such a way that it forces the value to be converted. For numeric and `string` operations, it's fairly easy to see how the coercions can occur.
-
-But, what sort of expression operations require/force (*implicitly*) a `boolean` coercion?
-
-1. The test expression in an `if (..)` statement.
-2. The test expression (second clause) in a `for ( .. ; .. ; .. )` header.
-3. The test expression in `while (..)` and `do..while(..)` loops.
-4. The test expression (first clause) in `? :` ternary expressions.
-5. The left-hand operand (which serves as a test expression -- see below!) to the `||` ("logical or") and `&&` ("logical and") operators.
-
-Any value used in these contexts that is not already a `boolean` will be *implicitly* coerced to a `boolean` using the rules of the `ToBoolean` abstract operation covered earlier in this chapter.
-
-Let's look at some examples:
+The earlier example with `break` in the `for..of` loop will trigger the `finally` clause. But you could instead manually terminate the generator's *iterator* instance from the outside with `return(..)`:
 
 ```js
-var a = 42;
-var b = "abc";
-var c;
-var d = null;
+var it = something();
+for (var v of it) {
+	console.log( v );
 
-if (a) {
-	console.log( "yep" );		// yep
+	// don't let the loop run forever!
+	if (v > 500) {
+		console.log(
+			// complete the generator's iterator
+			it.return( "Hello World" ).value
+		);
+		// no `break` needed here
+	}
+}
+// 1 9 33 105 321 969
+// cleaning up!
+// Hello World
+```
+
+When we call `it.return(..)`, it immediately terminates the generator, which of course runs the `finally` clause. Also, it sets the returned `value` to whatever you passed in to `return(..)`, which is how `"Hello World"` comes right back out. We also don't need to include a `break` now because the generator's *iterator* is set to `done:true`, so the `for..of` loop will terminate on its next iteration.
+
+Generators owe their namesake mostly to this *consuming produced values* use. But again, that's just one of the uses for generators, and frankly not even the main one we're concerned with in the context of this book.
+
+But now that we more fully understand some of the mechanics of how they work, we can *next* turn our attention to how generators apply to async concurrency.
+
+## Iterating Generators Asynchronously
+
+What do generators have to do with async coding patterns, fixing problems with callbacks, and the like? Let's get to answering that important question.
+
+We should revisit one of our scenarios from Chapter 3. Let's recall the callback approach:
+
+```js
+function foo(x,y,cb) {
+	ajax(
+		"http://some.url.1/?x=" + x + "&y=" + y,
+		cb
+	);
 }
 
-while (c) {
-	console.log( "nope, never runs" );
+foo( 11, 31, function(err,text) {
+	if (err) {
+		console.error( err );
+	}
+	else {
+		console.log( text );
+	}
+} );
+```
+
+If we wanted to express this same task flow control with a generator, we could do:
+
+```js
+function foo(x,y) {
+	ajax(
+		"http://some.url.1/?x=" + x + "&y=" + y,
+		function(err,data){
+			if (err) {
+				// throw an error into `*main()`
+				it.throw( err );
+			}
+			else {
+				// resume `*main()` with received `data`
+				it.next( data );
+			}
+		}
+	);
 }
 
-c = d ? a : b;
-c;								// "abc"
+function *main() {
+	try {
+		var text = yield foo( 11, 31 );
+		console.log( text );
+	}
+	catch (err) {
+		console.error( err );
+	}
+}
 
-if ((a && d) || c) {
-	console.log( "yep" );		// yep
+var it = main();
+
+// start it all up!
+it.next();
+```
+
+At first glance, this snippet is longer, and perhaps a little more complex looking, than the callback snippet before it. But don't let that impression get you off track. The generator snippet is actually **much** better! But there's a lot going on for us to explain.
+
+First, let's look at this part of the code, which is the most important:
+
+```js
+var text = yield foo( 11, 31 );
+console.log( text );
+```
+
+Think about how that code works for a moment. We're calling a normal function `foo(..)` and we're apparently able to get back the `text` from the Ajax call, even though it's asynchronous.
+
+How is that possible? If you recall the beginning of Chapter 1, we had almost identical code:
+
+```js
+var data = ajax( "..url 1.." );
+console.log( data );
+```
+
+And that code didn't work! Can you spot the difference? It's the `yield` used in a generator.
+
+That's the magic! That's what allows us to have what appears to be blocking, synchronous code, but it doesn't actually block the whole program; it only pauses/blocks the code in the generator itself.
+
+In `yield foo(11,31)`, first the `foo(11,31)` call is made, which returns nothing (aka `undefined`), so we're making a call to request data, but we're actually then doing `yield undefined`. That's OK, because the code is not currently relying on a `yield`ed value to do anything interesting. We'll revisit this point later in the chapter.
+
+We're not using `yield` in a message passing sense here, only in a flow control sense to pause/block. Actually, it will have message passing, but only in one direction, after the generator is resumed.
+
+So, the generator pauses at the `yield`, essentially asking the question, "what value should I return to assign to the variable `text`?" Who's going to answer that question?
+
+Look at `foo(..)`. If the Ajax request is successful, we call:
+
+```js
+it.next( data );
+```
+
+That's resuming the generator with the response data, which means that our paused `yield` expression receives that value directly, and then as it restarts the generator code, that value gets assigned to the local variable `text`.
+
+Pretty cool, huh?
+
+Take a step back and consider the implications. We have totally synchronous-looking code inside the generator (other than the `yield` keyword itself), but hidden behind the scenes, inside of `foo(..)`, the operations can complete asynchronously.
+
+**That's huge!** That's a nearly perfect solution to our previously stated problem with callbacks not being able to express asynchrony in a sequential, synchronous fashion that our brains can relate to.
+
+In essence, we are abstracting the asynchrony away as an implementation detail, so that we can reason synchronously/sequentially about our flow control: "Make an Ajax request, and when it finishes print out the response." And of course, we just expressed two steps in the flow control, but this same capability extends without bounds, to let us express however many steps we need to.
+
+**Tip:** This is such an important realization, just go back and read the last three paragraphs again to let it sink in!
+
+### Synchronous Error Handling
+
+But the preceding generator code has even more goodness to *yield* to us. Let's turn our attention to the `try..catch` inside the generator:
+
+```js
+try {
+	var text = yield foo( 11, 31 );
+	console.log( text );
+}
+catch (err) {
+	console.error( err );
 }
 ```
 
-In all these contexts, the non-`boolean` values are *implicitly coerced* to their `boolean` equivalents to make the test decisions.
+How does this work? The `foo(..)` call is asynchronously completing, and doesn't `try..catch` fail to catch asynchronous errors, as we looked at in Chapter 3?
 
-### Operators `||` and `&&`
-
-It's quite likely that you have seen the `||` ("logical or") and `&&` ("logical and") operators in most or all other languages you've used. So it'd be natural to assume that they work basically the same in JavaScript as in other similar languages.
-
-There's some very little known, but very important, nuance here.
-
-In fact, I would argue these operators shouldn't even be called "logical ___ operators", as that name is incomplete in describing what they do. If I were to give them a more accurate (if more clumsy) name, I'd call them "selector operators," or more completely, "operand selector operators."
-
-Why? Because they don't actually result in a *logic* value (aka `boolean`) in JavaScript, as they do in some other languages.
-
-So what *do* they result in? They result in the value of one (and only one) of their two operands. In other words, **they select one of the two operand's values**.
-
-Quoting the ES5 spec from section 11.11:
-
-> The value produced by a && or || operator is not necessarily of type Boolean. The value produced will always be the value of one of the two operand expressions.
-
-Let's illustrate:
+We already saw how the `yield` lets the assignment statement pause to wait for `foo(..)` to finish, so that the completed response can be assigned to `text`. The awesome part is that this `yield` pausing *also* allows the generator to `catch` an error. We throw that error into the generator with this part of the earlier code listing:
 
 ```js
-var a = 42;
-var b = "abc";
-var c = null;
-
-a || b;		// 42
-a && b;		// "abc"
-
-c || b;		// "abc"
-c && b;		// null
+if (err) {
+	// throw an error into `*main()`
+	it.throw( err );
+}
 ```
 
-**Wait, what!?** Think about that. In languages like C and PHP, those expressions result in `true` or `false`, but in JS (and Python and Ruby, for that matter!), the result comes from the values themselves.
+The `yield`-pause nature of generators means that not only do we get synchronous-looking `return` values from async function calls, but we can also synchronously `catch` errors from those async function calls!
 
-Both `||` and `&&` operators perform a `boolean` test on the **first operand** (`a` or `c`). If the operand is not already `boolean` (as it's not, here), a normal `ToBoolean` coercion occurs, so that the test can be performed.
-
-For the `||` operator, if the test is `true`, the `||` expression results in the value of the *first operand* (`a` or `c`). If the test is `false`, the `||` expression results in the value of the *second operand* (`b`).
-
-Inversely, for the `&&` operator, if the test is `true`, the `&&` expression results in the value of the *second operand* (`b`). If the test is `false`, the `&&` expression results in the value of the *first operand* (`a` or `c`).
-
-The result of a `||` or `&&` expression is always the underlying value of one of the operands, **not** the (possibly coerced) result of the test. In `c && b`, `c` is `null`, and thus falsy. But the `&&` expression itself results in `null` (the value in `c`), not in the coerced `false` used in the test.
-
-Do you see how these operators act as "operand selectors", now?
-
-Another way of thinking about these operators:
+So we've seen we can throw errors *into* a generator, but what about throwing errors *out of* a generator? Exactly as you'd expect:
 
 ```js
-a || b;
-// roughly equivalent to:
-a ? a : b;
+function *main() {
+	var x = yield "Hello World";
 
-a && b;
-// roughly equivalent to:
-a ? b : a;
-```
-
-**Note:** I call `a || b` "roughly equivalent" to `a ? a : b` because the outcome is identical, but there's a nuanced difference. In `a ? a : b`, if `a` was a more complex expression (like for instance one that might have side effects like calling a `function`, etc.), then the `a` expression would possibly be evaluated twice (if the first evaluation was truthy). By contrast, for `a || b`, the `a` expression is evaluated only once, and that value is used both for the coercive test as well as the result value (if appropriate). The same nuance applies to the `a && b` and `a ? b : a` expressions.
-
-An extremely common and helpful usage of this behavior, which there's a good chance you may have used before and not fully understood, is:
-
-```js
-function foo(a,b) {
-	a = a || "hello";
-	b = b || "world";
-
-	console.log( a + " " + b );
+	yield x.toLowerCase();	// cause an exception!
 }
 
-foo();					// "hello world"
-foo( "yeah", "yeah!" );	// "yeah yeah!"
+var it = main();
+
+it.next().value;			// Hello World
+
+try {
+	it.next( 42 );
+}
+catch (err) {
+	console.error( err );	// TypeError
+}
 ```
 
-The `a = a || "hello"` idiom (sometimes said to be JavaScript's version of the C# "null coalescing operator") acts to test `a` and if it has no value (or only an undesired falsy value), provides a backup default value (`"hello"`).
+Of course, we could have manually thrown an error with `throw ..` instead of causing an exception.
 
-**Be careful**, though!
-
-```js
-foo( "That's it!", "" ); // "That's it! world" <-- Oops!
-```
-
-See the problem? `""` as the second argument is a falsy value (see `ToBoolean` earlier in this chapter), so the `b = b || "world"` test fails, and the `"world"` default value is substituted, even though the intent probably was to have the explicitly passed `""` be the value assigned to `b`.
-
-This `||` idiom is extremely common, and quite helpful, but you have to use it only in cases where *all falsy values* should be skipped. Otherwise, you'll need to be more explicit in your test, and probably use a `? :` ternary instead.
-
-This *default value assignment* idiom is so common (and useful!) that even those who publicly and vehemently decry JavaScript coercion often use it in their own code!
-
-What about `&&`?
-
-There's another idiom that is quite a bit less commonly authored manually, but which is used by JS minifiers frequently. The `&&` operator "selects" the second operand if and only if the first operand tests as truthy, and this usage is sometimes called the "guard operator" (also see "Short Circuited" in Chapter 5) -- the first expression test "guards" the second expression:
+We can even `catch` the same error that we `throw(..)` into the generator, essentially giving the generator a chance to handle it but if it doesn't, the *iterator* code must handle it:
 
 ```js
-function foo() {
-	console.log( a );
+function *main() {
+	var x = yield "Hello World";
+
+	// never gets here
+	console.log( x );
 }
 
-var a = 42;
+var it = main();
 
-a && foo(); // 42
+it.next();
+
+try {
+	// will `*main()` handle this error? we'll see!
+	it.throw( "Oops" );
+}
+catch (err) {
+	// nope, didn't handle it!
+	console.error( err );			// Oops
+}
 ```
 
-`foo()` gets called only because `a` tests as truthy. If that test failed, this `a && foo()` expression statement would just silently stop -- this is known as "short circuiting" -- and never call `foo()`.
+Synchronous-looking error handling (via `try..catch`) with async code is a huge win for readability and reason-ability.
 
-Again, it's not nearly as common for people to author such things. Usually, they'd do `if (a) { foo(); }` instead. But JS minifiers choose `a && foo()` because it's much shorter. So, now, if you ever have to decipher such code, you'll know what it's doing and why.
+## Generators + Promises
 
-OK, so `||` and `&&` have some neat tricks up their sleeve, as long as you're willing to allow the *implicit* coercion into the mix.
+In our previous discussion, we showed how generators can be iterated asynchronously, which is a huge step forward in sequential reason-ability over the spaghetti mess of callbacks. But we lost something very important: the trustability and composability of Promises (see Chapter 3)!
 
-**Note:** Both the `a = b || "something"` and `a && b()` idioms rely on short circuiting behavior, which we cover in more detail in Chapter 5.
+Don't worry -- we can get that back. The best of all worlds in ES6 is to combine generators (synchronous-looking async code) with Promises (trustable and composable).
 
-The fact that these operators don't actually result in `true` and `false` is possibly messing with your head a little bit by now. You're probably wondering how all your `if` statements and `for` loops have been working, if they've included compound logical expressions like `a && (b || c)`.
+But how?
 
-Don't worry! The sky is not falling. Your code is (probably) just fine. It's just that you probably never realized before that there was an *implicit* coercion to `boolean` going on **after** the compound expression was evaluated.
+Recall from Chapter 3 the Promise-based approach to our running Ajax example:
+
+```js
+function foo(x,y) {
+	return request(
+		"http://some.url.1/?x=" + x + "&y=" + y
+	);
+}
+
+foo( 11, 31 )
+.then(
+	function(text){
+		console.log( text );
+	},
+	function(err){
+		console.error( err );
+	}
+);
+```
+
+In our earlier generator code for the running Ajax example, `foo(..)` returned nothing (`undefined`), and our *iterator* control code didn't care about that `yield`ed value.
+
+But here the Promise-aware `foo(..)` returns a promise after making the Ajax call. That suggests that we could construct a promise with `foo(..)` and then `yield` it from the generator, and then the *iterator* control code would receive that promise.
+
+But what should the *iterator* do with the promise?
+
+It should listen for the promise to resolve (fulfillment or rejection), and then either resume the generator with the fulfillment message or throw an error into the generator with the rejection reason.
+
+Let me repeat that, because it's so important. The natural way to get the most out of Promises and generators is **to `yield` a Promise**, and wire that Promise to control the generator's *iterator*.
+
+Let's give it a try! First, we'll put the Promise-aware `foo(..)` together with the generator `*main()`:
+
+```js
+function foo(x,y) {
+	return request(
+		"http://some.url.1/?x=" + x + "&y=" + y
+	);
+}
+
+function *main() {
+	try {
+		var text = yield foo( 11, 31 );
+		console.log( text );
+	}
+	catch (err) {
+		console.error( err );
+	}
+}
+```
+
+The most powerful revelation in this refactor is that the code inside `*main()` **did not have to change at all!** Inside the generator, whatever values are `yield`ed out is just an opaque implementation detail, so we're not even aware it's happening, nor do we need to worry about it.
+
+But how are we going to run `*main()` now? We still have some of the implementation plumbing work to do, to receive and wire up the `yield`ed promise so that it resumes the generator upon resolution. We'll start by trying that manually:
+
+```js
+var it = main();
+
+var p = it.next().value;
+
+// wait for the `p` promise to resolve
+p.then(
+	function(text){
+		it.next( text );
+	},
+	function(err){
+		it.throw( err );
+	}
+);
+```
+
+Actually, that wasn't so painful at all, was it?
+
+This snippet should look very similar to what we did earlier with the manually wired generator controlled by the error-first callback. Instead of an `if (err) { it.throw..`, the promise already splits fulfillment (success) and rejection (failure) for us, but otherwise the *iterator* control is identical.
+
+Now, we've glossed over some important details.
+
+Most importantly, we took advantage of the fact that we knew that `*main()` only had one Promise-aware step in it. What if we wanted to be able to Promise-drive a generator no matter how many steps it has? We certainly don't want to manually write out the Promise chain differently for each generator! What would be much nicer is if there was a way to repeat (aka "loop" over) the iteration control, and each time a Promise comes out, wait on its resolution before continuing.
+
+Also, what if the generator throws out an error (intentionally or accidentally) during the `it.next(..)` call? Should we quit, or should we `catch` it and send it right back in? Similarly, what if we `it.throw(..)` a Promise rejection into the generator, but it's not handled, and comes right back out?
+
+### Promise-Aware Generator Runner
+
+The more you start to explore this path, the more you realize, "wow, it'd be great if there was just some utility to do it for me." And you're absolutely correct. This is such an important pattern, and you don't want to get it wrong (or exhaust yourself repeating it over and over), so your best bet is to use a utility that is specifically designed to *run* Promise-`yield`ing generators in the manner we've illustrated.
+
+Several Promise abstraction libraries provide just such a utility, including my *asynquence* library and its `runner(..)`, which will be discussed in Appendix A of this book.
+
+But for the sake of learning and illustration, let's just define our own standalone utility that we'll call `run(..)`:
+
+```js
+// thanks to Benjamin Gruenbaum (@benjamingr on GitHub) for
+// big improvements here!
+function run(gen) {
+	var args = [].slice.call( arguments, 1), it;
+
+	// initialize the generator in the current context
+	it = gen.apply( this, args );
+
+	// return a promise for the generator completing
+	return Promise.resolve()
+		.then( function handleNext(value){
+			// run to the next yielded value
+			var next = it.next( value );
+
+			return (function handleResult(next){
+				// generator has completed running?
+				if (next.done) {
+					return next.value;
+				}
+				// otherwise keep going
+				else {
+					return Promise.resolve( next.value )
+						.then(
+							// resume the async loop on
+							// success, sending the resolved
+							// value back into the generator
+							handleNext,
+
+							// if `value` is a rejected
+							// promise, propagate error back
+							// into the generator for its own
+							// error handling
+							function handleErr(err) {
+								return Promise.resolve(
+									it.throw( err )
+								)
+								.then( handleResult );
+							}
+						);
+				}
+			})(next);
+		} );
+}
+```
+
+As you can see, it's a quite a bit more complex than you'd probably want to author yourself, and you especially wouldn't want to repeat this code for each generator you use. So, a utility/library helper is definitely the way to go. Nevertheless, I encourage you to spend a few minutes studying that code listing to get a better sense of how to manage the generator+Promise negotiation.
+
+How would you use `run(..)` with `*main()` in our *running* Ajax example?
+
+```js
+function *main() {
+	// ..
+}
+
+run( main );
+```
+
+That's it! The way we wired `run(..)`, it will automatically advance the generator you pass to it, asynchronously until completion.
+
+**Note:** The `run(..)` we defined returns a promise which is wired to resolve once the generator is complete, or receive an uncaught exception if the generator doesn't handle it. We don't show that capability here, but we'll come back to it later in the chapter.
+
+#### ES7: `async` and `await`?
+
+The preceding pattern -- generators yielding Promises that then control the generator's *iterator* to advance it to completion -- is such a powerful and useful approach, it would be nicer if we could do it without the clutter of the library utility helper (aka `run(..)`).
+
+There's probably good news on that front. At the time of this writing, there's early but strong support for a proposal for more syntactic addition in this realm for the post-ES6, ES7-ish timeframe. Obviously, it's too early to guarantee the details, but there's a pretty decent chance it will shake out similar to the following:
+
+```js
+function foo(x,y) {
+	return request(
+		"http://some.url.1/?x=" + x + "&y=" + y
+	);
+}
+
+async function main() {
+	try {
+		var text = await foo( 11, 31 );
+		console.log( text );
+	}
+	catch (err) {
+		console.error( err );
+	}
+}
+
+main();
+```
+
+As you can see, there's no `run(..)` call (meaning no need for a library utility!) to invoke and drive `main()` -- it's just called as a normal function. Also, `main()` isn't declared as a generator function anymore; it's a new kind of function: `async function`. And finally, instead of `yield`ing a Promise, we `await` for it to resolve.
+
+The `async function` automatically knows what to do if you `await` a Promise -- it will pause the function (just like with generators) until the Promise resolves. We didn't illustrate it in this snippet, but calling an async function like `main()` automatically returns a promise that's resolved whenever the function finishes completely.
+
+**Tip:** The `async` / `await` syntax should look very familiar to readers with  experience in C#, because it's basically identical.
+
+The proposal essentially codifies support for the pattern we've already derived, into a syntactic mechanism: combining Promises with sync-looking flow control code. That's the best of both worlds combined, to effectively address practically all of the major concerns we outlined with callbacks.
+
+The mere fact that such a ES7-ish proposal already exists and has early support and enthusiasm is a major vote of confidence in the future importance of this async pattern.
+
+### Promise Concurrency in Generators
+
+So far, all we've demonstrated is a single-step async flow with Promises+generators. But real-world code will often have many async steps.
+
+If you're not careful, the sync-looking style of generators may lull you into complacency with how you structure your async concurrency, leading to suboptimal performance patterns. So we want to spend a little time exploring the options.
+
+Imagine a scenario where you need to fetch data from two different sources, then combine those responses to make a third request, and finally print out the last response. We explored a similar scenario with Promises in Chapter 3, but let's reconsider it in the context of generators.
+
+Your first instinct might be something like:
+
+```js
+function *foo() {
+	var r1 = yield request( "http://some.url.1" );
+	var r2 = yield request( "http://some.url.2" );
+
+	var r3 = yield request(
+		"http://some.url.3/?v=" + r1 + "," + r2
+	);
+
+	console.log( r3 );
+}
+
+// use previously defined `run(..)` utility
+run( foo );
+```
+
+This code will work, but in the specifics of our scenario, it's not optimal. Can you spot why?
+
+Because the `r1` and `r2` requests can -- and for performance reasons, *should* -- run concurrently, but in this code they will run sequentially; the `"http://some.url.2"` URL isn't Ajax fetched until after the `"http://some.url.1"` request is finished. These two requests are independent, so the better performance approach would likely be to have them run at the same time.
+
+But how exactly would you do that with a generator and `yield`? We know that `yield` is only a single pause point in the code, so you can't really do two pauses at the same time.
+
+The most natural and effective answer is to base the async flow on Promises, specifically on their capability to manage state in a time-independent fashion (see "Future Value" in Chapter 3).
+
+The simplest approach:
+
+```js
+function *foo() {
+	// make both requests "in parallel"
+	var p1 = request( "http://some.url.1" );
+	var p2 = request( "http://some.url.2" );
+
+	// wait until both promises resolve
+	var r1 = yield p1;
+	var r2 = yield p2;
+
+	var r3 = yield request(
+		"http://some.url.3/?v=" + r1 + "," + r2
+	);
+
+	console.log( r3 );
+}
+
+// use previously defined `run(..)` utility
+run( foo );
+```
+
+Why is this different from the previous snippet? Look at where the `yield` is and is not. `p1` and `p2` are promises for Ajax requests made concurrently (aka "in parallel"). It doesn't matter which one finishes first, because promises will hold onto their resolved state for as long as necessary.
+
+Then we use two subsequent `yield` statements to wait for and retrieve the resolutions from the promises (into `r1` and `r2`, respectively). If `p1` resolves first, the `yield p1` resumes first then waits on the `yield p2` to resume. If `p2` resolves first, it will just patiently hold onto that resolution value until asked, but the `yield p1` will hold on first, until `p1` resolves.
+
+Either way, both `p1` and `p2` will run concurrently, and both have to finish, in either order, before the `r3 = yield request..` Ajax request will be made.
+
+If that flow control processing model sounds familiar, it's basically the same as what we identified in Chapter 3 as the "gate" pattern, enabled by the `Promise.all([ .. ])` utility. So, we could also express the flow control like this:
+
+```js
+function *foo() {
+	// make both requests "in parallel," and
+	// wait until both promises resolve
+	var results = yield Promise.all( [
+		request( "http://some.url.1" ),
+		request( "http://some.url.2" )
+	] );
+
+	var r1 = results[0];
+	var r2 = results[1];
+
+	var r3 = yield request(
+		"http://some.url.3/?v=" + r1 + "," + r2
+	);
+
+	console.log( r3 );
+}
+
+// use previously defined `run(..)` utility
+run( foo );
+```
+
+**Note:** As we discussed in Chapter 3, we can even use ES6 destructuring assignment to simplify the `var r1 = .. var r2 = ..` assignments, with `var [r1,r2] = results`.
+
+In other words, all of the concurrency capabilities of Promises are available to us in the generator+Promise approach. So in any place where you need more than sequential this-then-that async flow control steps, Promises are likely your best bet.
+
+#### Promises, Hidden
+
+As a word of stylistic caution, be careful about how much Promise logic you include **inside your generators**. The whole point of using generators for asynchrony in the way we've described is to create simple, sequential, sync-looking code, and to hide as much of the details of asynchrony away from that code as possible.
+
+For example, this might be a cleaner approach:
+
+```js
+// note: normal function, not generator
+function bar(url1,url2) {
+	return Promise.all( [
+		request( url1 ),
+		request( url2 )
+	] );
+}
+
+function *foo() {
+	// hide the Promise-based concurrency details
+	// inside `bar(..)`
+	var results = yield bar(
+		"http://some.url.1",
+		"http://some.url.2"
+	);
+
+	var r1 = results[0];
+	var r2 = results[1];
+
+	var r3 = yield request(
+		"http://some.url.3/?v=" + r1 + "," + r2
+	);
+
+	console.log( r3 );
+}
+
+// use previously defined `run(..)` utility
+run( foo );
+```
+
+Inside `*foo()`, it's cleaner and clearer that all we're doing is just asking `bar(..)` to get us some `results`, and we'll `yield`-wait on that to happen. We don't have to care that under the covers a `Promise.all([ .. ])` Promise composition will be used to make that happen.
+
+**We treat asynchrony, and indeed Promises, as an implementation detail.**
+
+Hiding your Promise logic inside a function that you merely call from your generator is especially useful if you're going to do a sophisticated series flow-control. For example:
+
+```js
+function bar() {
+	Promise.all( [
+		baz( .. )
+		.then( .. ),
+		Promise.race( [ .. ] )
+	] )
+	.then( .. )
+}
+```
+
+That kind of logic is sometimes required, and if you dump it directly inside your generator(s), you've defeated most of the reason why you would want to use generators in the first place. We *should* intentionally abstract such details away from our generator code so that they don't clutter up the higher level task expression.
+
+Beyond creating code that is both functional and performant, you should also strive to make code that is as reason-able and maintainable as possible.
+
+**Note:** Abstraction is not *always* a healthy thing for programming -- many times it can increase complexity in exchange for terseness. But in this case, I believe it's much healthier for your generator+Promise async code than the alternatives. As with all such advice, though, pay attention to your specific situations and make proper decisions for you and your team.
+
+## Generator Delegation
+
+In the previous section, we showed calling regular functions from inside a generator, and how that remains a useful technique for abstracting away implementation details (like async Promise flow). But the main drawback of using a normal function for this task is that it has to behave by the normal function rules, which means it cannot pause itself with `yield` like a generator can.
+
+It may then occur to you that you might try to call one generator from another generator, using our `run(..)` helper, such as:
+
+```js
+function *foo() {
+	var r2 = yield request( "http://some.url.2" );
+	var r3 = yield request( "http://some.url.3/?v=" + r2 );
+
+	return r3;
+}
+
+function *bar() {
+	var r1 = yield request( "http://some.url.1" );
+
+	// "delegating" to `*foo()` via `run(..)`
+	var r3 = yield run( foo );
+
+	console.log( r3 );
+}
+
+run( bar );
+```
+
+We run `*foo()` inside of `*bar()` by using our `run(..)` utility again. We take advantage here of the fact that the `run(..)` we defined earlier returns a promise which is resolved when its generator is run to completion (or errors out), so if we `yield` out to a `run(..)` instance the promise from another `run(..)` call, it automatically pauses `*bar()` until `*foo()` finishes.
+
+But there's an even better way to integrate calling `*foo()` into `*bar()`, and it's called `yield`-delegation. The special syntax for `yield`-delegation is: `yield * __` (notice the extra `*`). Before we see it work in our previous example, let's look at a simpler scenario:
+
+```js
+function *foo() {
+	console.log( "`*foo()` starting" );
+	yield 3;
+	yield 4;
+	console.log( "`*foo()` finished" );
+}
+
+function *bar() {
+	yield 1;
+	yield 2;
+	yield *foo();	// `yield`-delegation!
+	yield 5;
+}
+
+var it = bar();
+
+it.next().value;	// 1
+it.next().value;	// 2
+it.next().value;	// `*foo()` starting
+					// 3
+it.next().value;	// 4
+it.next().value;	// `*foo()` finished
+					// 5
+```
+
+**Note:** Similar to a note earlier in the chapter where I explained why I prefer `function *foo() ..` instead of `function* foo() ..`, I also prefer -- differing from most other documentation on the topic -- to say `yield *foo()` instead of `yield* foo()`. The placement of the `*` is purely stylistic and up to your best judgment. But I find the consistency of styling attractive.
+
+How does the `yield *foo()` delegation work?
+
+First, calling `foo()` creates an *iterator* exactly as we've already seen. Then, `yield *` delegates/transfers the *iterator* instance control (of the present `*bar()` generator) over to this other `*foo()` *iterator*.
+
+So, the first two `it.next()` calls are controlling `*bar()`, but when we make the third `it.next()` call, now `*foo()` starts up, and now we're controlling `*foo()` instead of `*bar()`. That's why it's called delegation -- `*bar()` delegated its iteration control to `*foo()`.
+
+As soon as the `it` *iterator* control exhausts the entire `*foo()` *iterator*, it automatically returns to controlling `*bar()`.
+
+So now back to the previous example with the three sequential Ajax requests:
+
+```js
+function *foo() {
+	var r2 = yield request( "http://some.url.2" );
+	var r3 = yield request( "http://some.url.3/?v=" + r2 );
+
+	return r3;
+}
+
+function *bar() {
+	var r1 = yield request( "http://some.url.1" );
+
+	// "delegating" to `*foo()` via `yield*`
+	var r3 = yield *foo();
+
+	console.log( r3 );
+}
+
+run( bar );
+```
+
+The only difference between this snippet and the version used earlier is the use of `yield *foo()` instead of the previous `yield run(foo)`.
+
+**Note:** `yield *` yields iteration control, not generator control; when you invoke the `*foo()` generator, you're now `yield`-delegating to its *iterator*. But you can actually `yield`-delegate to any *iterable*; `yield *[1,2,3]` would consume the default *iterator* for the `[1,2,3]` array value.
+
+### Why Delegation?
+
+The purpose of `yield`-delegation is mostly code organization, and in that way is symmetrical with normal function calling.
+
+Imagine two modules that respectively provide methods `foo()` and `bar()`, where `bar()` calls `foo()`. The reason the two are separate is generally because the proper organization of code for the program calls for them to be in separate functions. For example, there may be cases where `foo()` is called standalone, and other places where `bar()` calls `foo()`.
+
+For all these exact same reasons, keeping generators separate aids in program readability, maintenance, and debuggability. In that respect, `yield *` is a syntactic shortcut for manually iterating over the steps of `*foo()` while inside of `*bar()`.
+
+Such manual approach would be especially complex if the steps in `*foo()` were asynchronous, which is why you'd probably need to use that `run(..)` utility to do it. And as we've shown, `yield *foo()` eliminates the need for a sub-instance of the `run(..)` utility (like `run(foo)`).
+
+### Delegating Messages
+
+You may wonder how this `yield`-delegation works not just with *iterator* control but with the two-way message passing. Carefully follow the flow of messages in and out, through the `yield`-delegation:
+
+```js
+function *foo() {
+	console.log( "inside `*foo()`:", yield "B" );
+
+	console.log( "inside `*foo()`:", yield "C" );
+
+	return "D";
+}
+
+function *bar() {
+	console.log( "inside `*bar()`:", yield "A" );
+
+	// `yield`-delegation!
+	console.log( "inside `*bar()`:", yield *foo() );
+
+	console.log( "inside `*bar()`:", yield "E" );
+
+	return "F";
+}
+
+var it = bar();
+
+console.log( "outside:", it.next().value );
+// outside: A
+
+console.log( "outside:", it.next( 1 ).value );
+// inside `*bar()`: 1
+// outside: B
+
+console.log( "outside:", it.next( 2 ).value );
+// inside `*foo()`: 2
+// outside: C
+
+console.log( "outside:", it.next( 3 ).value );
+// inside `*foo()`: 3
+// inside `*bar()`: D
+// outside: E
+
+console.log( "outside:", it.next( 4 ).value );
+// inside `*bar()`: 4
+// outside: F
+```
+
+Pay particular attention to the processing steps after the `it.next(3)` call:
+
+1. The `3` value is passed (through the `yield`-delegation in `*bar()`) into the waiting `yield "C"` expression inside of `*foo()`.
+2. `*foo()` then calls `return "D"`, but this value doesn't get returned all the way back to the outside `it.next(3)` call.
+3. Instead, the `"D"` value is sent as the result of the waiting `yield *foo()` expression inside of `*bar()` -- this `yield`-delegation expression has essentially been paused while all of `*foo()` was exhausted. So `"D"` ends up inside of `*bar()` for it to print out.
+4. `yield "E"` is called inside of `*bar()`, and the `"E"` value is yielded to the outside as the result of the `it.next(3)` call.
+
+From the perspective of the external *iterator* (`it`), it doesn't appear any differently between controlling the initial generator or a delegated one.
+
+In fact, `yield`-delegation doesn't even have to be directed to another generator; it can just be directed to a non-generator, general *iterable*. For example:
+
+```js
+function *bar() {
+	console.log( "inside `*bar()`:", yield "A" );
+
+	// `yield`-delegation to a non-generator!
+	console.log( "inside `*bar()`:", yield *[ "B", "C", "D" ] );
+
+	console.log( "inside `*bar()`:", yield "E" );
+
+	return "F";
+}
+
+var it = bar();
+
+console.log( "outside:", it.next().value );
+// outside: A
+
+console.log( "outside:", it.next( 1 ).value );
+// inside `*bar()`: 1
+// outside: B
+
+console.log( "outside:", it.next( 2 ).value );
+// outside: C
+
+console.log( "outside:", it.next( 3 ).value );
+// outside: D
+
+console.log( "outside:", it.next( 4 ).value );
+// inside `*bar()`: undefined
+// outside: E
+
+console.log( "outside:", it.next( 5 ).value );
+// inside `*bar()`: 5
+// outside: F
+```
+
+Notice the differences in where the messages were received/reported between this example and the one previous.
+
+Most strikingly, the default `array` *iterator* doesn't care about any messages sent in via `next(..)` calls, so the values `2`, `3`, and `4` are essentially ignored. Also, because that *iterator* has no explicit `return` value (unlike the previously used `*foo()`), the `yield *` expression gets an `undefined` when it finishes.
+
+#### Exceptions Delegated, Too!
+
+In the same way that `yield`-delegation transparently passes messages through in both directions, errors/exceptions also pass in both directions:
+
+```js
+function *foo() {
+	try {
+		yield "B";
+	}
+	catch (err) {
+		console.log( "error caught inside `*foo()`:", err );
+	}
+
+	yield "C";
+
+	throw "D";
+}
+
+function *bar() {
+	yield "A";
+
+	try {
+		yield *foo();
+	}
+	catch (err) {
+		console.log( "error caught inside `*bar()`:", err );
+	}
+
+	yield "E";
+
+	yield *baz();
+
+	// note: can't get here!
+	yield "G";
+}
+
+function *baz() {
+	throw "F";
+}
+
+var it = bar();
+
+console.log( "outside:", it.next().value );
+// outside: A
+
+console.log( "outside:", it.next( 1 ).value );
+// outside: B
+
+console.log( "outside:", it.throw( 2 ).value );
+// error caught inside `*foo()`: 2
+// outside: C
+
+console.log( "outside:", it.next( 3 ).value );
+// error caught inside `*bar()`: D
+// outside: E
+
+try {
+	console.log( "outside:", it.next( 4 ).value );
+}
+catch (err) {
+	console.log( "error caught outside:", err );
+}
+// error caught outside: F
+```
+
+Some things to note from this snippet:
+
+1. When we call `it.throw(2)`, it sends the error message `2` into `*bar()`, which delegates that to `*foo()`, which then `catch`es it and handles it gracefully. Then, the `yield "C"` sends `"C"` back out as the return `value` from the `it.throw(2)` call.
+2. The `"D"` value that's next `throw`n from inside `*foo()` propagates out to `*bar()`, which `catch`es it and handles it gracefully. Then the `yield "E"` sends `"E"` back out as the return `value` from the `it.next(3)` call.
+3. Next, the exception `throw`n from `*baz()` isn't caught in `*bar()` -- though we did `catch` it outside -- so both `*baz()` and `*bar()` are set to a completed state. After this snippet, you would not be able to get the `"G"` value out with any subsequent `next(..)` call(s) -- they will just return `undefined` for `value`.
+
+### Delegating Asynchrony
+
+Let's finally get back to our earlier `yield`-delegation example with the multiple sequential Ajax requests:
+
+```js
+function *foo() {
+	var r2 = yield request( "http://some.url.2" );
+	var r3 = yield request( "http://some.url.3/?v=" + r2 );
+
+	return r3;
+}
+
+function *bar() {
+	var r1 = yield request( "http://some.url.1" );
+
+	var r3 = yield *foo();
+
+	console.log( r3 );
+}
+
+run( bar );
+```
+
+Instead of calling `yield run(foo)` inside of `*bar()`, we just call `yield *foo()`.
+
+In the previous version of this example, the Promise mechanism (controlled by `run(..)`) was used to transport the value from `return r3` in `*foo()` to the local variable `r3` inside `*bar()`. Now, that value is just returned back directly via the `yield *` mechanics.
+
+Otherwise, the behavior is pretty much identical.
+
+### Delegating "Recursion"
+
+Of course, `yield`-delegation can keep following as many delegation steps as you wire up. You could even use `yield`-delegation for async-capable generator "recursion" -- a generator `yield`-delegating to itself:
+
+```js
+function *foo(val) {
+	if (val > 1) {
+		// generator recursion
+		val = yield *foo( val - 1 );
+	}
+
+	return yield request( "http://some.url/?v=" + val );
+}
+
+function *bar() {
+	var r1 = yield *foo( 3 );
+	console.log( r1 );
+}
+
+run( bar );
+```
+
+**Note:** Our `run(..)` utility could have been called with `run( foo, 3 )`, because it supports additional parameters being passed along to the initialization of the generator. However, we used a parameter-free `*bar()` here to highlight the flexibility of `yield *`.
+
+What processing steps follow from that code? Hang on, this is going to be quite intricate to describe in detail:
+
+1. `run(bar)` starts up the `*bar()` generator.
+2. `foo(3)` creates an *iterator* for `*foo(..)` and passes `3` as its `val` parameter.
+3. Because `3 > 1`, `foo(2)` creates another *iterator* and passes in `2` as its `val` parameter.
+4. Because `2 > 1`, `foo(1)` creates yet another *iterator* and passes in `1` as its `val` parameter.
+5. `1 > 1` is `false`, so we next call `request(..)` with the `1` value, and get a promise back for that first Ajax call.
+6. That promise is `yield`ed out, which comes back to the `*foo(2)` generator instance.
+7. The `yield *` passes that promise back out to the `*foo(3)` generator instance. Another `yield *` passes the promise out to the `*bar()` generator instance. And yet again another `yield *` passes the promise out to the `run(..)` utility, which will wait on that promise (for the first Ajax request) to proceed.
+8. When the promise resolves, its fulfillment message is sent to resume `*bar()`, which passes through the `yield *` into the `*foo(3)` instance, which then passes through the `yield *` to the `*foo(2)` generator instance, which then passes through the `yield *` to the normal `yield` that's waiting in the `*foo(3)` generator instance.
+9. That first call's Ajax response is now immediately `return`ed from the `*foo(3)` generator instance, which sends that value back as the result of the `yield *` expression in the `*foo(2)` instance, and assigned to its local `val` variable.
+10. Inside `*foo(2)`, a second Ajax request is made with `request(..)`, whose promise is `yield`ed back to the `*foo(1)` instance, and then `yield *` propagates all the way out to `run(..)` (step 7 again). When the promise resolves, the second Ajax response propagates all the way back into the `*foo(2)` generator instance, and is assigned to its local `val` variable.
+11. Finally, the third Ajax request is made with `request(..)`, its promise goes out to `run(..)`, and then its resolution value comes all the way back, which is then `return`ed so that it comes back to the waiting `yield *` expression in `*bar()`.
+
+Phew! A lot of crazy mental juggling, huh? You might want to read through that a few more times, and then go grab a snack to clear your head!
+
+## Generator Concurrency
+
+As we discussed in both Chapter 1 and earlier in this chapter, two simultaneously running "processes" can cooperatively interleave their operations, and many times this can *yield* (pun intended) very powerful asynchrony expressions.
+
+Frankly, our earlier examples of concurrency interleaving of multiple generators showed how to make it really confusing. But we hinted that there's places where this capability is quite useful.
+
+Recall a scenario we looked at in Chapter 1, where two different simultaneous Ajax response handlers needed to coordinate with each other to make sure that the data communication was not a race condition. We slotted the responses into the `res` array like this:
+
+```js
+function response(data) {
+	if (data.url == "http://some.url.1") {
+		res[0] = data;
+	}
+	else if (data.url == "http://some.url.2") {
+		res[1] = data;
+	}
+}
+```
+
+But how can we use multiple generators concurrently for this scenario?
+
+```js
+// `request(..)` is a Promise-aware Ajax utility
+
+var res = [];
+
+function *reqData(url) {
+	res.push(
+		yield request( url )
+	);
+}
+```
+
+**Note:** We're going to use two instances of the `*reqData(..)` generator here, but there's no difference to running a single instance of two different generators; both approaches are reasoned about identically. We'll see two different generators coordinating in just a bit.
+
+Instead of having to manually sort out `res[0]` and `res[1]` assignments, we'll use coordinated ordering so that `res.push(..)` properly slots the values in the expected and predictable order. The expressed logic thus should feel a bit cleaner.
+
+But how will we actually orchestrate this interaction? First, let's just do it manually, with Promises:
+
+```js
+var it1 = reqData( "http://some.url.1" );
+var it2 = reqData( "http://some.url.2" );
+
+var p1 = it1.next().value;
+var p2 = it2.next().value;
+
+p1
+.then( function(data){
+	it1.next( data );
+	return p2;
+} )
+.then( function(data){
+	it2.next( data );
+} );
+```
+
+`*reqData(..)`'s two instances are both started to make their Ajax requests, then paused with `yield`. Then we choose to resume the first instance when `p1` resolves, and then `p2`'s resolution will restart the second instance. In this way, we use Promise orchestration to ensure that `res[0]` will have the first response and `res[1]` will have the second response.
+
+But frankly, this is awfully manual, and it doesn't really let the generators orchestrate themselves, which is where the true power can lie. Let's try it a different way:
+
+```js
+// `request(..)` is a Promise-aware Ajax utility
+
+var res = [];
+
+function *reqData(url) {
+	var data = yield request( url );
+
+	// transfer control
+	yield;
+
+	res.push( data );
+}
+
+var it1 = reqData( "http://some.url.1" );
+var it2 = reqData( "http://some.url.2" );
+
+var p1 = it1.next().value;
+var p2 = it2.next().value;
+
+p1.then( function(data){
+	it1.next( data );
+} );
+
+p2.then( function(data){
+	it2.next( data );
+} );
+
+Promise.all( [p1,p2] )
+.then( function(){
+	it1.next();
+	it2.next();
+} );
+```
+
+OK, this is a bit better (though still manual!), because now the two instances of `*reqData(..)` run truly concurrently, and (at least for the first part) independently.
+
+In the previous snippet, the second instance was not given its data until after the first instance was totally finished. But here, both instances receive their data as soon as their respective responses come back, and then each instance does another `yield` for control transfer purposes. We then choose what order to resume them in the `Promise.all([ .. ])` handler.
+
+What may not be as obvious is that this approach hints at an easier form for a reusable utility, because of the symmetry. We can do even better. Let's imagine using a utility called `runAll(..)`:
+
+```js
+// `request(..)` is a Promise-aware Ajax utility
+
+var res = [];
+
+runAll(
+	function*(){
+		var p1 = request( "http://some.url.1" );
+
+		// transfer control
+		yield;
+
+		res.push( yield p1 );
+	},
+	function*(){
+		var p2 = request( "http://some.url.2" );
+
+		// transfer control
+		yield;
+
+		res.push( yield p2 );
+	}
+);
+```
+
+**Note:** We're not including a code listing for `runAll(..)` as it is not only long enough to bog down the text, but is an extension of the logic we've already implemented in `run(..)` earlier. So, as a good supplementary exercise for the reader, try your hand at evolving the code from `run(..)` to work like the imagined `runAll(..)`. Also, my *asynquence* library provides a previously mentioned `runner(..)` utility with this kind of capability already built in, and will be discussed in Appendix A of this book.
+
+Here's how the processing inside `runAll(..)` would operate:
+
+1. The first generator gets a promise for the first Ajax response from `"http://some.url.1"`, then `yield`s control back to the `runAll(..)` utility.
+2. The second generator runs and does the same for `"http://some.url.2"`, `yield`ing control back to the `runAll(..)` utility.
+3. The first generator resumes, and then `yield`s out its promise `p1`. The `runAll(..)` utility does the same in this case as our previous `run(..)`, in that it waits on that promise to resolve, then resumes the same generator (no control transfer!). When `p1` resolves, `runAll(..)` resumes the first generator again with that resolution value, and then `res[0]` is given its value. When the first generator then finishes, that's an implicit transfer of control.
+4. The second generator resumes, `yield`s out its promise `p2`, and waits for it to resolve. Once it does, `runAll(..)` resumes the second generator with that value, and `res[1]` is set.
+
+In this running example, we use an outer variable called `res` to store the results of the two different Ajax responses -- that's our concurrency coordination making that possible.
+
+But it might be quite helpful to further extend `runAll(..)` to provide an inner variable space for the multiple generator instances to *share*, such as an empty object we'll call `data` below. Also, it could take non-Promise values that are `yield`ed and hand them off to the next generator.
 
 Consider:
 
 ```js
-var a = 42;
-var b = null;
-var c = "foo";
+// `request(..)` is a Promise-aware Ajax utility
 
-if (a && (b || c)) {
-	console.log( "yep" );
-}
+runAll(
+	function*(data){
+		data.res = [];
+
+		// transfer control (and message pass)
+		var url1 = yield "http://some.url.2";
+
+		var p1 = request( url1 ); // "http://some.url.1"
+
+		// transfer control
+		yield;
+
+		data.res.push( yield p1 );
+	},
+	function*(data){
+		// transfer control (and message pass)
+		var url2 = yield "http://some.url.1";
+
+		var p2 = request( url2 ); // "http://some.url.2"
+
+		// transfer control
+		yield;
+
+		data.res.push( yield p2 );
+	}
+);
 ```
 
-This code still works the way you always thought it did, except for one subtle extra detail. The `a && (b || c)` expression *actually* results in `"foo"`, not `true`. So, the `if` statement *then* forces the `"foo"` value to coerce to a `boolean`, which of course will be `true`.
+In this formulation, the two generators are not just coordinating control transfer, but actually communicating with each other, both through `data.res` and the `yield`ed messages that trade `url1` and `url2` values. That's incredibly powerful!
 
-See? No reason to panic. Your code is probably still safe. But now you know more about how it does what it does.
+Such realization also serves as a conceptual base for a more sophisticated asynchrony technique called CSP (Communicating Sequential Processes), which we will cover in Appendix B of this book.
 
-And now you also realize that such code is using *implicit* coercion. If you're in the "avoid (implicit) coercion camp" still, you're going to need to go back and make all of those tests *explicit*:
+## Thunks
 
-```js
-if (!!a && (!!b || !!c)) {
-	console.log( "yep" );
-}
-```
+So far, we've made the assumption that `yield`ing a Promise from a generator -- and having that Promise resume the generator via a helper utility like `run(..)` -- was the best possible way to manage asynchrony with generators. To be clear, it is.
 
-Good luck with that! ... Sorry, just teasing.
+But we skipped over another pattern that has some mildly widespread adoption, so in the interest of completeness we'll take a brief look at it.
 
-### Symbol Coercion
+In general computer science, there's an old pre-JS concept called a "thunk." Without getting bogged down in the historical nature, a narrow expression of a thunk in JS is a function that -- without any parameters -- is wired to call another function.
 
-Up to this point, there's been almost no observable outcome difference between *explicit* and *implicit* coercion -- only the readability of code has been at stake.
-
-But ES6 Symbols introduce a gotcha into the coercion system that we need to discuss briefly. For reasons that go well beyond the scope of what we'll discuss in this book, *explicit* coercion of a `symbol` to a `string` is allowed, but *implicit* coercion of the same is disallowed and throws an error.
-
-Consider:
-
-```js
-var s1 = Symbol( "cool" );
-String( s1 );					// "Symbol(cool)"
-
-var s2 = Symbol( "not cool" );
-s2 + "";						// TypeError
-```
-
-`symbol` values cannot coerce to `number` at all (throws an error either way), but strangely they can both *explicitly* and *implicitly* coerce to `boolean` (always `true`).
-
-Consistency is always easier to learn, and exceptions are never fun to deal with, but we just need to be careful around the new ES6 `symbol` values and how we coerce them.
-
-The good news: it's probably going to be exceedingly rare for you to need to coerce a `symbol` value. The way they're typically used (see Chapter 3) will probably not call for coercion on a normal basis.
-
-## Loose Equals vs. Strict Equals
-
-Loose equals is the `==` operator, and strict equals is the `===` operator. Both operators are used for comparing two values for "equality," but the "loose" vs. "strict" indicates a **very important** difference in behavior between the two, specifically in how they decide "equality."
-
-A very common misconception about these two operators is: "`==` checks values for equality and `===` checks both values and types for equality." While that sounds nice and reasonable, it's inaccurate. Countless well-respected JavaScript books and blogs have said exactly that, but unfortunately they're all *wrong*.
-
-The correct description is: "`==` allows coercion in the equality comparison and `===` disallows coercion."
-
-### Equality Performance
-
-Stop and think about the difference between the first (inaccurate) explanation and this second (accurate) one.
-
-In the first explanation, it seems obvious that `===` is *doing more work* than `==`, because it has to *also* check the type. In the second explanation, `==` is the one *doing more work* because it has to follow through the steps of coercion if the types are different.
-
-Don't fall into the trap, as many have, of thinking this has anything to do with performance, though, as if `==` is going to be slower than `===` in any relevant way. While it's measurable that coercion does take *a little bit* of processing time, it's mere microseconds (yes, that's millionths of a second!).
-
-If you're comparing two values of the same types, `==` and `===` use the identical algorithm, and so other than minor differences in engine implementation, they should do the same work.
-
-If you're comparing two values of different types, the performance isn't the important factor. What you should be asking yourself is: when comparing these two values, do I want coercion or not?
-
-If you want coercion, use `==` loose equality, but if you don't want coercion, use `===` strict equality.
-
-**Note:** The implication here then is that both `==` and `===` check the types of their operands. The difference is in how they respond if the types don't match.
-
-### Abstract Equality
-
-The `==` operator's behavior is defined as "The Abstract Equality Comparison Algorithm" in section 11.9.3 of the ES5 spec. What's listed there is a comprehensive but simple algorithm that explicitly states every possible combination of types, and how the coercions (if necessary) should happen for each combination.
-
-**Warning:** When (*implicit*) coercion is maligned as being too complicated and too flawed to be a *useful good part*, it is these rules of "abstract equality" that are being condemned. Generally, they are said to be too complex and too unintuitive for developers to practically learn and use, and that they are prone more to causing bugs in JS programs than to enabling greater code readability. I believe this is a flawed premise -- that you readers are competent developers who write (and read and understand!) algorithms (aka code) all day long. So, what follows is a plain exposition of the "abstract equality" in simple terms. But I implore you to also read the ES5 spec section 11.9.3. I think you'll be surprised at just how reasonable it is.
-
-Basically, the first clause (11.9.3.1) says, if the two values being compared are of the same type, they are simply and naturally compared via Identity as you'd expect. For example, `42` is only equal to `42`, and `"abc"` is only equal to `"abc"`.
-
-Some minor exceptions to normal expectation to be aware of:
-
-* `NaN` is never equal to itself (see Chapter 2)
-* `+0` and `-0` are equal to each other (see Chapter 2)
-
-The final provision in clause 11.9.3.1 is for `==` loose equality comparison with `object`s (including `function`s and `array`s). Two such values are only *equal* if they are both references to *the exact same value*. No coercion occurs here.
-
-**Note:** The `===` strict equality comparison is defined identically to 11.9.3.1, including the provision about two `object` values. It's a very little known fact that **`==` and `===` behave identically** in the case where two `object`s are being compared!
-
-The rest of the algorithm in 11.9.3 specifies that if you use `==` loose equality to compare two values of different types, one or both of the values will need to be *implicitly* coerced. This coercion happens so that both values eventually end up as the same type, which can then directly be compared for equality using simple value Identity.
-
-**Note:** The `!=` loose not-equality operation is defined exactly as you'd expect, in that it's literally the `==` operation comparison performed in its entirety, then the negation of the result. The same goes for the `!==` strict not-equality operation.
-
-#### Comparing: `string`s to `number`s
-
-To illustrate `==` coercion, let's first build off the `string` and `number` examples earlier in this chapter:
-
-```js
-var a = 42;
-var b = "42";
-
-a === b;	// false
-a == b;		// true
-```
-
-As we'd expect, `a === b` fails, because no coercion is allowed, and indeed the `42` and `"42"` values are different.
-
-However, the second comparison `a == b` uses loose equality, which means that if the types happen to be different, the comparison algorithm will perform *implicit* coercion on one or both values.
-
-But exactly what kind of coercion happens here? Does the `a` value of `42` become a `string`, or does the `b` value of `"42"` become a `number`?
-
-In the ES5 spec, clauses 11.9.3.4-5 say:
-
-> 4. If Type(x) is Number and Type(y) is String,
->    return the result of the comparison x == ToNumber(y).
-> 5. If Type(x) is String and Type(y) is Number,
->    return the result of the comparison ToNumber(x) == y.
-
-**Warning:** The spec uses `Number` and `String` as the formal names for the types, while this book prefers `number` and `string` for the primitive types. Do not let the capitalization of `Number` in the spec confuse you for the `Number()` native function. For our purposes, the capitalization of the type name is irrelevant -- they have basically the same meaning.
-
-Clearly, the spec says the `"42"` value is coerced to a `number` for the comparison. The *how* of that coercion has already been covered earlier, specifically with the `ToNumber` abstract operation. In this case, it's quite obvious then that the resulting two `42` values are equal.
-
-#### Comparing: anything to `boolean`
-
-One of the biggest gotchas with the *implicit* coercion of `==` loose equality pops up when you try to compare a value directly to `true` or `false`.
-
-Consider:
-
-```js
-var a = "42";
-var b = true;
-
-a == b;	// false
-```
-
-Wait, what happened here!? We know that `"42"` is a truthy value (see earlier in this chapter). So, how come it's not `==` loose equal to `true`?
-
-The reason is both simple and deceptively tricky. It's so easy to misunderstand, many JS developers never pay close enough attention to fully grasp it.
-
-Let's again quote the spec, clauses 11.9.3.6-7:
-
-> 6. If Type(x) is Boolean,
->    return the result of the comparison ToNumber(x) == y.
-> 7. If Type(y) is Boolean,
->    return the result of the comparison x == ToNumber(y).
-
-Let's break that down. First:
-
-```js
-var x = true;
-var y = "42";
-
-x == y; // false
-```
-
-The `Type(x)` is indeed `Boolean`, so it performs `ToNumber(x)`, which coerces `true` to `1`. Now, `1 == "42"` is evaluated. The types are still different, so (essentially recursively) we reconsult the algorithm, which just as above will coerce `"42"` to `42`, and `1 == 42` is clearly `false`.
-
-Reverse it, and we still get the same outcome:
-
-```js
-var x = "42";
-var y = false;
-
-x == y; // false
-```
-
-The `Type(y)` is `Boolean` this time, so `ToNumber(y)` yields `0`. `"42" == 0` recursively becomes `42 == 0`, which is of course `false`.
-
-In other words, **the value `"42"` is neither `== true` nor `== false`.** At first, that statement might seem crazy. How can a value be neither truthy nor falsy?
-
-But that's the problem! You're asking the wrong question, entirely. It's not your fault, really. Your brain is tricking you.
-
-`"42"` is indeed truthy, but `"42" == true` **is not performing a boolean test/coercion** at all, no matter what your brain says. `"42"` *is not* being coerced to a `boolean` (`true`), but instead `true` is being coerced to a `1`, and then `"42"` is being coerced to `42`.
-
-Whether we like it or not, `ToBoolean` is not even involved here, so the truthiness or falsiness of `"42"` is irrelevant to the `==` operation!
-
-What *is* relevant is to understand how the `==` comparison algorithm behaves with all the different type combinations. As it regards a `boolean` value on either side of the `==`, a `boolean` always coerces to a `number` *first*.
-
-If that seems strange to you, you're not alone. I personally would recommend to never, ever, under any circumstances, use `== true` or `== false`. Ever.
-
-But remember, I'm only talking about `==` here. `=== true` and `=== false` wouldn't allow the coercion, so they're safe from this hidden `ToNumber` coercion.
-
-Consider:
-
-```js
-var a = "42";
-
-// bad (will fail!):
-if (a == true) {
-	// ..
-}
-
-// also bad (will fail!):
-if (a === true) {
-	// ..
-}
-
-// good enough (works implicitly):
-if (a) {
-	// ..
-}
-
-// better (works explicitly):
-if (!!a) {
-	// ..
-}
-
-// also great (works explicitly):
-if (Boolean( a )) {
-	// ..
-}
-```
-
-If you avoid ever using `== true` or `== false` (aka loose equality with `boolean`s) in your code, you'll never have to worry about this truthiness/falsiness mental gotcha.
-
-#### Comparing: `null`s to `undefined`s
-
-Another example of *implicit* coercion can be seen with `==` loose equality between `null` and `undefined` values. Yet again quoting the ES5 spec, clauses 11.9.3.2-3:
-
-> 2. If x is null and y is undefined, return true.
-> 3. If x is undefined and y is null, return true.
-
-`null` and `undefined`, when compared with `==` loose equality, equate to (aka coerce to) each other (as well as themselves, obviously), and no other values in the entire language.
-
-What this means is that `null` and `undefined` can be treated as indistinguishable for comparison purposes, if you use the `==` loose equality operator to allow their mutual *implicit* coercion.
-
-```js
-var a = null;
-var b;
-
-a == b;		// true
-a == null;	// true
-b == null;	// true
-
-a == false;	// false
-b == false;	// false
-a == "";	// false
-b == "";	// false
-a == 0;		// false
-b == 0;		// false
-```
-
-The coercion between `null` and `undefined` is safe and predictable, and no other values can give false positives in such a check. I recommend using this coercion to allow `null` and `undefined` to be indistinguishable and thus treated as the same value.
+In other words, you wrap a function definition around function call -- with any parameters it needs -- to *defer* the execution of that call, and that wrapping function is a thunk. When you later execute the thunk, you end up calling the original function.
 
 For example:
 
 ```js
-var a = doSomething();
-
-if (a == null) {
-	// ..
+function foo(x,y) {
+	return x + y;
 }
+
+function fooThunk() {
+	return foo( 3, 4 );
+}
+
+// later
+
+console.log( fooThunk() );	// 7
 ```
 
-The `a == null` check will pass only if `doSomething()` returns either `null` or `undefined`, and will fail with any other value, even other falsy values like `0`, `false`, and `""`.
-
-The *explicit* form of the check, which disallows any such coercion, is (I think) unnecessarily much uglier (and perhaps a tiny bit less performant!):
-
-```js
-var a = doSomething();
-
-if (a === undefined || a === null) {
-	// ..
-}
-```
-
-In my opinion, the form `a == null` is yet another example where *implicit* coercion improves code readability, but does so in a reliably safe way.
-
-#### Comparing: `object`s to non-`object`s
-
-If an `object`/`function`/`array` is compared to a simple scalar primitive (`string`, `number`, or `boolean`), the ES5 spec says in clauses 11.9.3.8-9:
-
-> 8. If Type(x) is either String or Number and Type(y) is Object,
->    return the result of the comparison x == ToPrimitive(y).
-> 9. If Type(x) is Object and Type(y) is either String or Number,
->    return the result of the comparison ToPrimitive(x) == y.
-
-**Note:** You may notice that these clauses only mention `String` and `Number`, but not `Boolean`. That's because, as quoted earlier, clauses 11.9.3.6-7 take care of coercing any `Boolean` operand presented to a `Number` first.
+So, a synchronous thunk is pretty straightforward. But what about an async thunk? We can essentially extend the narrow thunk definition to include it receiving a callback.
 
 Consider:
 
 ```js
-var a = 42;
-var b = [ 42 ];
+function foo(x,y,cb) {
+	setTimeout( function(){
+		cb( x + y );
+	}, 1000 );
+}
 
-a == b;	// true
+function fooThunk(cb) {
+	foo( 3, 4, cb );
+}
+
+// later
+
+fooThunk( function(sum){
+	console.log( sum );		// 7
+} );
 ```
 
-The `[ 42 ]` value has its `ToPrimitive` abstract operation called (see the "Abstract Value Operations" section earlier), which results in the `"42"` value. From there, it's just `42 == "42"`, which as we've already covered becomes `42 == 42`, so `a` and `b` are found to be coercively equal.
+As you can see, `fooThunk(..)` only expects a `cb(..)` parameter, as it already has values `3` and `4` (for `x` and `y`, respectively) pre-specified and ready to pass to `foo(..)`. A thunk is just waiting around patiently for the last piece it needs to do its job: the callback.
 
-**Tip:** All the quirks of the `ToPrimitive` abstract operation that we discussed earlier in this chapter (`toString()`, `valueOf()`) apply here as you'd expect. This can be quite useful if you have a complex data structure that you want to define a custom `valueOf()` method on, to provide a simple value for equality comparison purposes.
+You don't want to make thunks manually, though. So, let's invent a utility that does this wrapping for us.
 
-In Chapter 3, we covered "unboxing," where an `object` wrapper around a primitive value (like from `new String("abc")`, for instance) is unwrapped, and the underlying primitive value (`"abc"`) is returned. This behavior is related to the `ToPrimitive` coercion in the `==` algorithm:
+Consider:
 
 ```js
-var a = "abc";
-var b = Object( a );	// same as `new String( a )`
+function thunkify(fn) {
+	var args = [].slice.call( arguments, 1 );
+	return function(cb) {
+		args.push( cb );
+		return fn.apply( null, args );
+	};
+}
 
-a === b;				// false
-a == b;					// true
+var fooThunk = thunkify( foo, 3, 4 );
+
+// later
+
+fooThunk( function(sum) {
+	console.log( sum );		// 7
+} );
 ```
 
-`a == b` is `true` because `b` is coerced (aka "unboxed," unwrapped) via `ToPrimitive` to its underlying `"abc"` simple scalar primitive value, which is the same as the value in `a`.
+**Tip:** Here we assume that the original (`foo(..)`) function signature expects its callback in the last position, with any other parameters coming before it. This is a pretty ubiquitous "standard" for async JS function standards. You might call it "callback-last style." If for some reason you had a need to handle "callback-first style" signatures, you would just make a utility that used `args.unshift(..)` instead of `args.push(..)`.
 
-There are some values where this is not the case, though, because of other overriding rules in the `==` algorithm. Consider:
+The preceding formulation of `thunkify(..)` takes both the `foo(..)` function reference, and any parameters it needs, and returns back the thunk itself (`fooThunk(..)`). However, that's not the typical approach you'll find to thunks in JS.
+
+Instead of `thunkify(..)` making the thunk itself, typically -- if not perplexingly -- the `thunkify(..)` utility would produce a function that produces thunks.
+
+Uhhhh... yeah.
+
+Consider:
 
 ```js
-var a = null;
-var b = Object( a );	// same as `Object()`
-a == b;					// false
-
-var c = undefined;
-var d = Object( c );	// same as `Object()`
-c == d;					// false
-
-var e = NaN;
-var f = Object( e );	// same as `new Number( e )`
-e == f;					// false
+function thunkify(fn) {
+	return function() {
+		var args = [].slice.call( arguments );
+		return function(cb) {
+			args.push( cb );
+			return fn.apply( null, args );
+		};
+	};
+}
 ```
 
-The `null` and `undefined` values cannot be boxed -- they have no object wrapper equivalent -- so `Object(null)` is just like `Object()` in that both just produce a normal object.
-
-`NaN` can be boxed to its `Number` object wrapper equivalent, but when `==` causes an unboxing, the `NaN == NaN` comparison fails because `NaN` is never equal to itself (see Chapter 2).
-
-### Edge Cases
-
-Now that we've thoroughly examined how the *implicit* coercion of `==` loose equality works (in both sensible and surprising ways), let's try to call out the worst, craziest corner cases so we can see what we need to avoid to not get bitten with coercion bugs.
-
-First, let's examine how modifying the built-in native prototypes can produce crazy results:
-
-#### A Number By Any Other Value Would...
+The main difference here is the extra `return function() { .. }` layer. Here's how its usage differs:
 
 ```js
-Number.prototype.valueOf = function() {
-	return 3;
-};
+var whatIsThis = thunkify( foo );
 
-new Number( 2 ) == 3;	// true
+var fooThunk = whatIsThis( 3, 4 );
+
+// later
+
+fooThunk( function(sum) {
+	console.log( sum );		// 7
+} );
 ```
 
-**Warning:** `2 == 3` would not have fallen into this trap, because neither `2` nor `3` would have invoked the built-in `Number.prototype.valueOf()` method because both are already primitive `number` values and can be compared directly. However, `new Number(2)` must go through the `ToPrimitive` coercion, and thus invoke `valueOf()`.
+Obviously, the big question this snippet implies is what is `whatIsThis` properly called? It's not the thunk, it's the thing that will produce thunks from `foo(..)` calls. It's kind of like a "factory" for "thunks." There doesn't seem to be any kind of standard agreement for naming such a thing.
 
-Evil, huh? Of course it is. No one should ever do such a thing. The fact that you *can* do this is sometimes used as a criticism of coercion and `==`. But that's misdirected frustration. JavaScript is not *bad* because you can do such things, a developer is *bad* **if they do such things**. Don't fall into the "my programming language should protect me from myself" fallacy.
-
-Next, let's consider another tricky example, which takes the evil from the previous example to another level:
+So, my proposal is "thunkory" ("thunk" + "factory").  So, `thunkify(..)` produces a thunkory, and a thunkory produces thunks. That reasoning is symmetric to my proposal for "promisory" in Chapter 3:
 
 ```js
-if (a == 2 && a == 3) {
+var fooThunkory = thunkify( foo );
+
+var fooThunk1 = fooThunkory( 3, 4 );
+var fooThunk2 = fooThunkory( 5, 6 );
+
+// later
+
+fooThunk1( function(sum) {
+	console.log( sum );		// 7
+} );
+
+fooThunk2( function(sum) {
+	console.log( sum );		// 11
+} );
+```
+
+**Note:** The running `foo(..)` example expects a style of callback that's not "error-first style." Of course, "error-first style" is much more common. If `foo(..)` had some sort of legitimate error-producing expectation, we could change it to expect and use an error-first callback. None of the subsequent `thunkify(..)` machinery cares what style of callback is assumed. The only difference in usage would be `fooThunk1(function(err,sum){..`.
+
+Exposing the thunkory method -- instead of how the earlier `thunkify(..)` hides this intermediary step -- may seem like unnecessary complication. But in general, it's quite useful to make thunkories at the beginning of your program to wrap existing API methods, and then be able to pass around and call those thunkories when you need thunks. The two distinct steps preserve a cleaner separation of capability.
+
+To illustrate:
+
+```js
+// cleaner:
+var fooThunkory = thunkify( foo );
+
+var fooThunk1 = fooThunkory( 3, 4 );
+var fooThunk2 = fooThunkory( 5, 6 );
+
+// instead of:
+var fooThunk1 = thunkify( foo, 3, 4 );
+var fooThunk2 = thunkify( foo, 5, 6 );
+```
+
+Regardless of whether you like to deal with the thunkories explicitly or not, the usage of thunks `fooThunk1(..)` and `fooThunk2(..)` remains the same.
+
+### s/promise/thunk/
+
+So what's all this thunk stuff have to do with generators?
+
+Comparing thunks to promises generally: they're not directly interchangable as they're not equivalent in behavior. Promises are vastly more capable and trustable than bare thunks.
+
+But in another sense, they both can be seen as a request for a value, which may be async in its answering.
+
+Recall from Chapter 3 we defined a utility for promisifying a function, which we called `Promise.wrap(..)` -- we could have called it `promisify(..)`, too! This Promise-wrapping utility doesn't produce Promises; it produces promisories that in turn produce Promises. This is completely symmetric to the thunkories and thunks presently being discussed.
+
+To illustrate the symmetry, let's first alter the running `foo(..)` example from earlier to assume an "error-first style" callback:
+
+```js
+function foo(x,y,cb) {
+	setTimeout( function(){
+		// assume `cb(..)` as "error-first style"
+		cb( null, x + y );
+	}, 1000 );
+}
+```
+
+Now, we'll compare using `thunkify(..)` and `promisify(..)` (aka `Promise.wrap(..)` from Chapter 3):
+
+```js
+// symmetrical: constructing the question asker
+var fooThunkory = thunkify( foo );
+var fooPromisory = promisify( foo );
+
+// symmetrical: asking the question
+var fooThunk = fooThunkory( 3, 4 );
+var fooPromise = fooPromisory( 3, 4 );
+
+// get the thunk answer
+fooThunk( function(err,sum){
+	if (err) {
+		console.error( err );
+	}
+	else {
+		console.log( sum );		// 7
+	}
+} );
+
+// get the promise answer
+fooPromise
+.then(
+	function(sum){
+		console.log( sum );		// 7
+	},
+	function(err){
+		console.error( err );
+	}
+);
+```
+
+Both the thunkory and the promisory are essentially asking a question (for a value), and respectively the thunk `fooThunk` and promise `fooPromise` represent the future answers to that question. Presented in that light, the symmetry is clear.
+
+With that perspective in mind, we can see that generators which `yield` Promises for asynchrony could instead `yield` thunks for asynchrony. All we'd need is a smarter `run(..)` utility (like from before) that can not only look for and wire up to a `yield`ed Promise but also to provide a callback to a `yield`ed thunk.
+
+Consider:
+
+```js
+function *foo() {
+	var val = yield request( "http://some.url.1" );
+	console.log( val );
+}
+
+run( foo );
+```
+
+In this example, `request(..)` could either be a promisory that returns a promise, or a thunkory that returns a thunk. From the perspective of what's going on inside the generator code logic, we don't care about that implementation detail, which is quite powerful!
+
+So, `request(..)` could be either:
+
+```js
+// promisory `request(..)` (see Chapter 3)
+var request = Promise.wrap( ajax );
+
+// vs.
+
+// thunkory `request(..)`
+var request = thunkify( ajax );
+```
+
+Finally, as a thunk-aware patch to our earlier `run(..)` utility, we would need logic like this:
+
+```js
+// ..
+// did we receive a thunk back?
+else if (typeof next.value == "function") {
+	return new Promise( function(resolve,reject){
+		// call the thunk with an error-first callback
+		next.value( function(err,msg) {
+			if (err) {
+				reject( err );
+			}
+			else {
+				resolve( msg );
+			}
+		} );
+	} )
+	.then(
+		handleNext,
+		function handleErr(err) {
+			return Promise.resolve(
+				it.throw( err )
+			)
+			.then( handleResult );
+		}
+	);
+}
+```
+
+Now, our generators can either call promisories to `yield` Promises, or call thunkories to `yield` thunks, and in either case, `run(..)` would handle that value and use it to wait for the completion to resume the generator.
+
+Symmetry wise, these two approaches look identical. However, we should point out that's true only from the perspective of Promises or thunks representing the future value continuation of a generator.
+
+From the larger perspective, thunks do not in and of themselves have hardly any of the trustability or composability guarantees that Promises are designed with. Using a thunk as a stand-in for a Promise in this particular generator asynchrony pattern is workable but should be seen as less than ideal when compared to all the benefits that Promises offer (see Chapter 3).
+
+If you have the option, prefer `yield pr` rather than `yield th`. But there's nothing wrong with having a `run(..)` utility which can handle both value types.
+
+**Note:** The `runner(..)` utility in my *asynquence* library, which will be discussed in Appendix A, handles `yield`s of Promises, thunks and *asynquence* sequences.
+
+## Pre-ES6 Generators
+
+You're hopefully convinced now that generators are a very important addition to the async programming toolbox. But it's a new syntax in ES6, which means you can't just polyfill generators like you can Promises (which are just a new API). So what can we do to bring generators to our browser JS if we don't have the luxury of ignoring pre-ES6 browsers?
+
+For all new syntax extensions in ES6, there are tools -- the most common term for them is transpilers, for trans-compilers -- which can take your ES6 syntax and transform it into equivalent (but obviously uglier!) pre-ES6 code. So, generators can be transpiled into code that will have the same behavior but work in ES5 and below.
+
+But how? The "magic" of `yield` doesn't obviously sound like code that's easy to transpile. We actually hinted at a solution in our earlier discussion of closure-based *iterators*.
+
+### Manual Transformation
+
+Before we discuss the transpilers, let's derive how manual transpilation would work in the case of generators. This isn't just an academic exercise, because doing so will actually help further reinforce how they work.
+
+Consider:
+
+```js
+// `request(..)` is a Promise-aware Ajax utility
+
+function *foo(url) {
+	try {
+		console.log( "requesting:", url );
+		var val = yield request( url );
+		console.log( val );
+	}
+	catch (err) {
+		console.log( "Oops:", err );
+		return false;
+	}
+}
+
+var it = foo( "http://some.url.1" );
+```
+
+The first thing to observe is that we'll still need a normal `foo()` function that can be called, and it will still need to return an *iterator*. So, let's sketch out the non-generator transformation:
+
+```js
+function foo(url) {
+
+	// ..
+
+	// make and return an iterator
+	return {
+		next: function(v) {
+			// ..
+		},
+		throw: function(e) {
+			// ..
+		}
+	};
+}
+
+var it = foo( "http://some.url.1" );
+```
+
+The next thing to observe is that a generator does its "magic" by suspending its scope/state, but we can emulate that with function closure (see the *Scope & Closures* title of this series). To understand how to write such code, we'll first annotate different parts of our generator with state values:
+
+```js
+// `request(..)` is a Promise-aware Ajax utility
+
+function *foo(url) {
+	// STATE *1*
+
+	try {
+		console.log( "requesting:", url );
+		var TMP1 = request( url );
+
+		// STATE *2*
+		var val = yield TMP1;
+		console.log( val );
+	}
+	catch (err) {
+		// STATE *3*
+		console.log( "Oops:", err );
+		return false;
+	}
+}
+```
+
+**Note:** For more accurate illustration, we split up the `val = yield request..` statement into two parts, using the temporary `TMP1` variable. `request(..)` happens in state `*1*`, and the assignment of its completion value to `val` happens in state `*2*`. We'll get rid of that intermediate `TMP1` when we convert the code to its non-generator equivalent.
+
+In other words, `*1*` is the beginning state, `*2*` is the state if the `request(..)` succeeds, and `*3*` is the state if the `request(..)` fails. You can probably imagine how any extra `yield` steps would just be encoded as extra states.
+
+Back to our transpiled generator, let's define a variable `state` in the closure we can use to keep track of the state:
+
+```js
+function foo(url) {
+	// manage generator state
+	var state;
+
 	// ..
 }
 ```
 
-You might think this would be impossible, because `a` could never be equal to both `2` and `3` *at the same time*. But "at the same time" is inaccurate, since the first expression `a == 2` happens strictly *before* `a == 3`.
-
-So, what if we make `a.valueOf()` have side effects each time it's called, such that the first time it returns `2` and the second time it's called it returns `3`? Pretty easy:
+Now, let's define an inner function called `process(..)` inside the closure which handles each state, using a `switch` statement:
 
 ```js
-var i = 2;
+// `request(..)` is a Promise-aware Ajax utility
 
-Number.prototype.valueOf = function() {
-	return i++;
-};
+function foo(url) {
+	// manage generator state
+	var state;
 
-var a = new Number( 42 );
+	// generator-wide variable declarations
+	var val;
 
-if (a == 2 && a == 3) {
-	console.log( "Yep, this happened." );
-}
-```
-
-Again, these are evil tricks. Don't do them. But also don't use them as complaints against coercion. Potential abuses of a mechanism are not sufficient evidence to condemn the mechanism. Just avoid these crazy tricks, and stick only with valid and proper usage of coercion.
-
-#### False-y Comparisons
-
-The most common complaint against *implicit* coercion in `==` comparisons comes from how falsy values behave surprisingly when compared to each other.
-
-To illustrate, let's look at a list of the corner-cases around falsy value comparisons, to see which ones are reasonable and which are troublesome:
-
-```js
-"0" == null;			// false
-"0" == undefined;		// false
-"0" == false;			// true -- UH OH!
-"0" == NaN;				// false
-"0" == 0;				// true
-"0" == "";				// false
-
-false == null;			// false
-false == undefined;		// false
-false == NaN;			// false
-false == 0;				// true -- UH OH!
-false == "";			// true -- UH OH!
-false == [];			// true -- UH OH!
-false == {};			// false
-
-"" == null;				// false
-"" == undefined;		// false
-"" == NaN;				// false
-"" == 0;				// true -- UH OH!
-"" == [];				// true -- UH OH!
-"" == {};				// false
-
-0 == null;				// false
-0 == undefined;			// false
-0 == NaN;				// false
-0 == [];				// true -- UH OH!
-0 == {};				// false
-```
-
-In this list of 24 comparisons, 17 of them are quite reasonable and predictable. For example, we know that `""` and `NaN` are not at all equatable values, and indeed they don't coerce to be loose equals, whereas `"0"` and `0` are reasonably equatable and *do* coerce as loose equals.
-
-However, seven of the comparisons are marked with "UH OH!" because as false positives, they are much more likely gotchas that could trip you up. `""` and `0` are definitely distinctly different values, and it's rare you'd want to treat them as equatable, so their mutual coercion is troublesome. Note that there aren't any false negatives here.
-
-#### The Crazy Ones
-
-We don't have to stop there, though. We can keep looking for even more troublesome coercions:
-
-```js
-[] == ![];		// true
-```
-
-Oooo, that seems at a higher level of crazy, right!? Your brain may likely trick you that you're comparing a truthy to a falsy value, so the `true` result is surprising, as we *know* a value can never be truthy and falsy at the same time!
-
-But that's not what's actually happening. Let's break it down. What do we know about the `!` unary operator? It explicitly coerces to a `boolean` using the `ToBoolean` rules (and it also flips the parity). So before `[] == ![]` is even processed, it's actually already translated to `[] == false`. We already saw that form in our above list (`false == []`), so its surprise result is *not new* to us.
-
-How about other corner cases?
-
-```js
-2 == [2];		// true
-"" == [null];	// true
-```
-
-As we said earlier in our `ToNumber` discussion, the right-hand side `[2]` and `[null]` values will go through a `ToPrimitive` coercion so they can be more readily compared to the simple primitives (`2` and `""`, respectively) on the left-hand side. Since the `valueOf()` for `array` values just returns the `array` itself, coercion falls to stringifying the `array`.
-
-`[2]` will become `"2"`, which then is `ToNumber` coerced to `2` for the right-hand side value in the first comparison. `[null]` just straight becomes `""`.
-
-So, `2 == 2` and `"" == ""` are completely understandable.
-
-If your instinct is to still dislike these results, your frustration is not actually with coercion like you probably think it is. It's actually a complaint against the default `array` values' `ToPrimitive` behavior of coercing to a `string` value. More likely, you'd just wish that `[2].toString()` didn't return `"2"`, or that `[null].toString()` didn't return `""`.
-
-But what exactly *should* these `string` coercions result in? I can't really think of any other appropriate `string` coercion of `[2]` than `"2"`, except perhaps `"[2]"` -- but that could be very strange in other contexts!
-
-You could rightly make the case that since `String(null)` becomes `"null"`, then `String([null])` should also become `"null"`. That's a reasonable assertion. So, that's the real culprit.
-
-*Implicit* coercion itself isn't the evil here. Even an *explicit* coercion of `[null]` to a `string` results in `""`. What's at odds is whether it's sensible at all for `array` values to stringify to the equivalent of their contents, and exactly how that happens. So, direct your frustration at the rules for `String( [..] )`, because that's where the craziness stems from. Perhaps there should be no stringification coercion of `array`s at all? But that would have lots of other downsides in other parts of the language.
-
-Another famously cited gotcha:
-
-```js
-0 == "\n";		// true
-```
-
-As we discussed earlier with empty `""`, `"\n"` (or `" "` or any other whitespace combination) is coerced via `ToNumber`, and the result is `0`. What other `number` value would you expect whitespace to coerce to? Does it bother you that *explicit* `Number(" ")` yields `0`?
-
-Really the only other reasonable `number` value that empty strings or whitespace strings could coerce to is the `NaN`. But would that *really* be better? The comparison `" " == NaN` would of course fail, but it's unclear that we'd have really *fixed* any of the underlying concerns.
-
-The chances that a real-world JS program fails because `0 == "\n"` are awfully rare, and such corner cases are easy to avoid.
-
-Type conversions **always** have corner cases, in any language -- nothing specific to coercion. The issues here are about second-guessing a certain set of corner cases (and perhaps rightly so!?), but that's not a salient argument against the overall coercion mechanism.
-
-Bottom line: almost any crazy coercion between *normal values* that you're likely to run into (aside from intentionally tricky `valueOf()` or `toString()` hacks as earlier) will boil down to the short seven-item list of gotcha coercions we've identified above.
-
-To contrast against these 24 likely suspects for coercion gotchas, consider another list like this:
-
-```js
-42 == "43";							// false
-"foo" == 42;						// false
-"true" == true;						// false
-
-42 == "42";							// true
-"foo" == [ "foo" ];					// true
-```
-
-In these nonfalsy, noncorner cases (and there are literally an infinite number of comparisons we could put on this list), the coercion results are totally safe, reasonable, and explainable.
-
-#### Sanity Check
-
-OK, we've definitely found some crazy stuff when we've looked deeply into *implicit* coercion. No wonder that most developers claim coercion is evil and should be avoided, right!?
-
-But let's take a step back and do a sanity check.
-
-By way of magnitude comparison, we have *a list* of seven troublesome gotcha coercions, but we have *another list* of (at least 17, but actually infinite) coercions that are totally sane and explainable.
-
-If you're looking for a textbook example of "throwing the baby out with the bathwater," this is it: discarding the entirety of coercion (the infinitely large list of safe and useful behaviors) because of a list of literally just seven gotchas.
-
-The more prudent reaction would be to ask, "how can I use the countless *good parts* of coercion, but avoid the few *bad parts*?"
-
-Let's look again at the *bad* list:
-
-```js
-"0" == false;			// true -- UH OH!
-false == 0;				// true -- UH OH!
-false == "";			// true -- UH OH!
-false == [];			// true -- UH OH!
-"" == 0;				// true -- UH OH!
-"" == [];				// true -- UH OH!
-0 == [];				// true -- UH OH!
-```
-
-Four of the seven items on this list involve `== false` comparison, which we said earlier you should **always, always** avoid. That's a pretty easy rule to remember.
-
-Now the list is down to three.
-
-```js
-"" == 0;				// true -- UH OH!
-"" == [];				// true -- UH OH!
-0 == [];				// true -- UH OH!
-```
-
-Are these reasonable coercions you'd do in a normal JavaScript program? Under what conditions would they really happen?
-
-I don't think it's terribly likely that you'd literally use `== []` in a `boolean` test in your program, at least not if you know what you're doing. You'd probably instead be doing `== ""` or `== 0`, like:
-
-```js
-function doSomething(a) {
-	if (a == "") {
-		// ..
+	function process(v) {
+		switch (state) {
+			case 1:
+				console.log( "requesting:", url );
+				return request( url );
+			case 2:
+				val = v;
+				console.log( val );
+				return;
+			case 3:
+				var err = v;
+				console.log( "Oops:", err );
+				return false;
+		}
 	}
+
+	// ..
 }
 ```
 
-You'd have an oops if you accidentally called `doSomething(0)` or `doSomething([])`. Another scenario:
+Each state in our generator is represented by its own `case` in the `switch` statement. `process(..)` will be called each time we need to process a new state. We'll come back to how that works in just a moment.
+
+For any generator-wide variable declarations (`val`), we move those to a `var` declaration outside of `process(..)` so they can survive multiple calls to `process(..)`. But the "block scoped" `err` variable is only needed for the `*3*` state, so we leave it in place.
+
+In state `*1*`, instead of `yield request(..)`, we did `return request(..)`. In terminal state `*2*`, there was no explicit `return`, so we just do a `return;` which is the same as `return undefined`. In terminal state `*3*`, there was a `return false`, so we preserve that.
+
+Now we need to define the code in the *iterator* functions so they call `process(..)` appropriately:
 
 ```js
-function doSomething(a,b) {
-	if (a == b) {
-		// ..
+function foo(url) {
+	// manage generator state
+	var state;
+
+	// generator-wide variable declarations
+	var val;
+
+	function process(v) {
+		switch (state) {
+			case 1:
+				console.log( "requesting:", url );
+				return request( url );
+			case 2:
+				val = v;
+				console.log( val );
+				return;
+			case 3:
+				var err = v;
+				console.log( "Oops:", err );
+				return false;
+		}
 	}
+
+	// make and return an iterator
+	return {
+		next: function(v) {
+			// initial state
+			if (!state) {
+				state = 1;
+				return {
+					done: false,
+					value: process()
+				};
+			}
+			// yield resumed successfully
+			else if (state == 1) {
+				state = 2;
+				return {
+					done: true,
+					value: process( v )
+				};
+			}
+			// generator already completed
+			else {
+				return {
+					done: true,
+					value: undefined
+				};
+			}
+		},
+		"throw": function(e) {
+			// the only explicit error handling is in
+			// state *1*
+			if (state == 1) {
+				state = 3;
+				return {
+					done: true,
+					value: process( e )
+				};
+			}
+			// otherwise, an error won't be handled,
+			// so just throw it right back out
+			else {
+				throw e;
+			}
+		}
+	};
 }
 ```
 
-Again, this could break if you did something like `doSomething("",0)` or `doSomething([],"")`.
+How does this code work?
 
-So, while the situations *can* exist where these coercions will bite you, and you'll want to be careful around them, they're probably not super common on the whole of your code base.
+1. The first call to the *iterator*'s `next()` call would move the generator from the uninitialized state to state `1`, and then call `process()` to handle that state. The return value from `request(..)`, which is the promise for the Ajax response, is returned back as the `value` property from the `next()` call.
+2. If the Ajax request succeeds, the second call to `next(..)` should send in the Ajax response value, which moves our state to `2`. `process(..)` is again called (this time with the passed in Ajax response value), and the `value` property returned from `next(..)` will be `undefined`.
+3. However, if the Ajax request fails, `throw(..)` should be called with the error, which would move the state from `1` to `3` (instead of `2`). Again `process(..)` is called, this time with the error value. That `case` returns `false`, which is set as the `value` property returned from the `throw(..)` call.
 
-#### Safely Using Implicit Coercion
+From the outside -- that is, interacting only with the *iterator* -- this `foo(..)` normal function works pretty much the same as the `*foo(..)` generator would have worked. So we've effectively "transpiled" our ES6 generator to pre-ES6 compatibility!
 
-The most important advice I can give you: examine your program and reason about what values can show up on either side of an `==` comparison. To effectively avoid issues with such comparisons, here's some heuristic rules to follow:
+We could then manually instantiate our generator and control its iterator -- calling `var it = foo("..")` and `it.next(..)` and such -- or better, we could pass it to our previously defined `run(..)` utility as `run(foo,"..")`.
 
-1. If either side of the comparison can have `true` or `false` values, don't ever, EVER use `==`.
-2. If either side of the comparison can have `[]`, `""`, or `0` values, seriously consider not using `==`.
+### Automatic Transpilation
 
-In these scenarios, it's almost certainly better to use `===` instead of `==`, to avoid unwanted coercion. Follow those two simple rules and pretty much all the coercion gotchas that could reasonably hurt you will effectively be avoided.
+The preceding exercise of manually deriving a transformation of our ES6 generator to pre-ES6 equivalent teaches us how generators work conceptually. But that transformation was really intricate and very non-portable to other generators in our code. It would be quite impractical to do this work by hand, and would completely obviate all the benefit of generators.
 
-**Being more explicit/verbose in these cases will save you from a lot of headaches.**
+But luckily, several tools already exist that can automatically convert ES6 generators to things like what we derived in the previous section. Not only do they do the heavy lifting work for us, but they also handle several complications that we glossed over.
 
-The question of `==` vs. `===` is really appropriately framed as: should you allow coercion for a comparison or not?
+One such tool is regenerator (https://facebook.github.io/regenerator/), from the smart folks at Facebook.
 
-There's lots of cases where such coercion can be helpful, allowing you to more tersely express some comparison logic (like with `null` and `undefined`, for example).
-
-In the overall scheme of things, there's relatively few cases where *implicit* coercion is truly dangerous. But in those places, for safety sake, definitely use `===`.
-
-**Tip:** Another place where coercion is guaranteed *not* to bite you is with the `typeof` operator. `typeof` is always going to return you one of seven strings (see Chapter 1), and none of them are the empty `""` string. As such, there's no case where checking the type of some value is going to run afoul of *implicit* coercion. `typeof x == "function"` is 100% as safe and reliable as `typeof x === "function"`. Literally, the spec says the algorithm will be identical in this situation. So, don't just blindly use `===` everywhere simply because that's what your code tools tell you to do, or (worst of all) because you've been told in some book to **not think about it**. You own the quality of your code.
-
-Is *implicit* coercion evil and dangerous? In a few cases, yes, but overwhelmingly, no.
-
-Be a responsible and mature developer. Learn how to use the power of coercion (both *explicit* and *implicit*) effectively and safely. And teach those around you to do the same.
-
-Here's a handy table made by Alex Dorey (@dorey on GitHub) to visualize a variety of comparisons:
-
-<img src="fig1.png" width="600">
-
-Source: https://github.com/dorey/JavaScript-Equality-Table
-
-## Abstract Relational Comparison
-
-While this part of *implicit* coercion often gets a lot less attention, it's important nonetheless to think about what happens with `a < b` comparisons (similar to how we just examined `a == b` in depth).
-
-The "Abstract Relational Comparison" algorithm in ES5 section 11.8.5 essentially divides itself into two parts: what to do if the comparison involves both `string` values (second half), or anything else (first half).
-
-**Note:** The algorithm is only defined for `a < b`. So, `a > b` is handled as `b < a`.
-
-The algorithm first calls `ToPrimitive` coercion on both values, and if the return result of either call is not a `string`, then both values are coerced to `number` values using the `ToNumber` operation rules, and compared numerically.
-
-For example:
+If we use regenerator to transpile our previous generator, here's the code produced (at the time of this writing):
 
 ```js
-var a = [ 42 ];
-var b = [ "43" ];
+// `request(..)` is a Promise-aware Ajax utility
 
-a < b;	// true
-b < a;	// false
+var foo = regeneratorRuntime.mark(function foo(url) {
+    var val;
+
+    return regeneratorRuntime.wrap(function foo$(context$1$0) {
+        while (1) switch (context$1$0.prev = context$1$0.next) {
+        case 0:
+            context$1$0.prev = 0;
+            console.log( "requesting:", url );
+            context$1$0.next = 4;
+            return request( url );
+        case 4:
+            val = context$1$0.sent;
+            console.log( val );
+            context$1$0.next = 12;
+            break;
+        case 8:
+            context$1$0.prev = 8;
+            context$1$0.t0 = context$1$0.catch(0);
+            console.log("Oops:", context$1$0.t0);
+            return context$1$0.abrupt("return", false);
+        case 12:
+        case "end":
+            return context$1$0.stop();
+        }
+    }, foo, this, [[0, 8]]);
+});
 ```
 
-**Note:** Similar caveats for `-0` and `NaN` apply here as they did in the `==` algorithm discussed earlier.
+There's some obvious similarities here to our manual derivation, such as the `switch` / `case` statements, and we even see `val` pulled out of the closure just as we did.
 
-However, if both values are `string`s for the `<` comparison, simple lexicographic (natural alphabetic) comparison on the characters is performed:
+Of course, one trade-off is that regenerator's transpilation requires a helper library `regeneratorRuntime` that holds all the reusable logic for managing a general generator / *iterator*. A lot of that boilerplate looks different than our version, but even then, the concepts can be seen, like with `context$1$0.next = 4` keeping track of the next state for the generator.
 
-```js
-var a = [ "42" ];
-var b = [ "043" ];
+The main takeaway is that generators are not restricted to only being useful in ES6+ environments. Once you understand the concepts, you can employ them throughout your code, and use tools to transform the code to be compatible with older environments.
 
-a < b;	// false
-```
+This is more work than just using a `Promise` API polyfill for pre-ES6 Promises, but the effort is totally worth it, because generators are so much better at expressing async flow control in a reason-able, sensible, synchronous-looking, sequential fashion.
 
-`a` and `b` are *not* coerced to `number`s, because both of them end up as `string`s after the `ToPrimitive` coercion on the two `array`s. So, `"42"` is compared character by character to `"043"`, starting with the first characters `"4"` and `"0"`, respectively. Since `"0"` is lexicographically *less than* than `"4"`, the comparison returns `false`.
-
-The exact same behavior and reasoning goes for:
-
-```js
-var a = [ 4, 2 ];
-var b = [ 0, 4, 3 ];
-
-a < b;	// false
-```
-
-Here, `a` becomes `"4,2"` and `b` becomes `"0,4,3"`, and those lexicographically compare identically to the previous snippet.
-
-What about:
-
-```js
-var a = { b: 42 };
-var b = { b: 43 };
-
-a < b;	// ??
-```
-
-`a < b` is also `false`, because `a` becomes `[object Object]` and `b` becomes `[object Object]`, and so clearly `a` is not lexicographically less than `b`.
-
-But strangely:
-
-```js
-var a = { b: 42 };
-var b = { b: 43 };
-
-a < b;	// false
-a == b;	// false
-a > b;	// false
-
-a <= b;	// true
-a >= b;	// true
-```
-
-Why is `a == b` not `true`? They're the same `string` value (`"[object Object]"`), so it seems they should be equal, right? Nope. Recall the previous discussion about how `==` works with `object` references.
-
-But then how are `a <= b` and `a >= b` resulting in `true`, if `a < b` **and** `a == b` **and** `a > b` are all `false`?
-
-Because the spec says for `a <= b`, it will actually evaluate `b < a` first, and then negate that result. Since `b < a` is *also* `false`, the result of `a <= b` is `true`.
-
-That's probably awfully contrary to how you might have explained what `<=` does up to now, which would likely have been the literal: "less than *or* equal to." JS more accurately considers `<=` as "not greater than" (`!(a > b)`, which JS treats as `!(b < a)`). Moreover, `a >= b` is explained by first considering it as `b <= a`, and then applying the same reasoning.
-
-Unfortunately, there is no "strict relational comparison" as there is for equality. In other words, there's no way to prevent *implicit* coercion from occurring with relational comparisons like `a < b`, other than to ensure that `a` and `b` are of the same type explicitly before making the comparison.
-
-Use the same reasoning from our earlier `==` vs. `===` sanity check discussion. If coercion is helpful and reasonably safe, like in a `42 < "43"` comparison, **use it**. On the other hand, if you need to be safe about a relational comparison, *explicitly coerce* the values first, before using `<` (or its counterparts).
-
-```js
-var a = [ 42 ];
-var b = "043";
-
-a < b;						// false -- string comparison!
-Number( a ) < Number( b );	// true -- number comparison!
-```
+Once you get hooked on generators, you'll never want to go back to the hell of async spaghetti callbacks!
 
 ## Review
 
-In this chapter, we turned our attention to how JavaScript type conversions happen, called **coercion**, which can be characterized as either *explicit* or *implicit*.
+Generators are a new ES6 function type that does not run-to-completion like normal functions. Instead, the generator can be paused in mid-completion (entirely preserving its state), and it can later be resumed from where it left off.
 
-Coercion gets a bad rap, but it's actually quite useful in many cases. An important task for the responsible JS developer is to take the time to learn all the ins and outs of coercion to decide which parts will help improve their code, and which parts they really should avoid.
+This pause/resume interchange is cooperative rather than preemptive, which means that the generator has the sole capability to pause itself, using the `yield` keyword, and yet the *iterator* that controls the generator has the sole capability (via `next(..)`) to resume the generator.
 
-*Explicit* coercion is code which is obvious that the intent is to convert a value from one type to another. The benefit is improvement in readability and maintainability of code by reducing confusion.
+The `yield` / `next(..)` duality is not just a control mechanism, it's actually a two-way message passing mechanism. A `yield ..` expression essentially pauses waiting for a value, and the next `next(..)` call passes a value (or implicit `undefined`) back to that paused `yield` expression.
 
-*Implicit* coercion is coercion that is "hidden" as a side-effect of some other operation, where it's not as obvious that the type conversion will occur. While it may seem that *implicit* coercion is the opposite of *explicit* and is thus bad (and indeed, many think so!), actually *implicit* coercion is also about improving the readability of code.
+The key benefit of generators related to async flow control is that the code inside a generator expresses a sequence of steps for the task in a naturally sync/sequential fashion. The trick is that we essentially hide potential asynchrony behind the `yield` keyword -- moving the asynchrony to the code where the generator's *iterator* is controlled.
 
-Especially for *implicit*, coercion must be used responsibly and consciously. Know why you're writing the code you're writing, and how it works. Strive to write code that others will easily be able to learn from and understand as well.
+In other words, generators preserve a sequential, synchronous, blocking code pattern for async code, which lets our brains reason about the code much more naturally, addressing one of the two key drawbacks of callback-based async.

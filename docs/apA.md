@@ -1,395 +1,828 @@
-# You Don't Know JS: Types & Grammar
-# Appendix A: Mixed Environment JavaScript
+# You Don't Know JS: Async & Performance
+# Appendix A: *asynquence* Library
 
-Beyond the core language mechanics we've fully explored in this book, there are several ways that your JS code can behave differently when it runs in the real world. If JS was executing purely inside an engine, it'd be entirely predictable based on nothing but the black-and-white of the spec. But JS pretty much always runs in the context of a hosting environment, which exposes your code to some degree of unpredictability.
+Chapters 1 and 2 went into quite a bit of detail about typical asynchronous programming patterns and how they're commonly solved with callbacks. But we also saw why callbacks are fatally limited in capability, which led us to Chapters 3 and 4, with Promises and generators offering a much more solid, trustable, and reason-able base to build your asynchrony on.
 
-For example, when your code runs alongside code from other sources, or when your code runs in different types of JS engines (not just browsers), there are some things that may behave differently.
+I referenced my own asynchronous library *asynquence* (http://github.com/getify/asynquence) -- "async" + "sequence" = "asynquence" -- several times in this book, and I want to now briefly explain how it works and why its unique design is important and helpful.
 
-We'll briefly explore some of these concerns.
+In the next appendix, we'll explore some advanced async patterns, but you'll probably want a library to make those palatable enough to be useful. We'll use *asynquence* to express those patterns, so you'll want to spend a little time here getting to know the library first.
 
-## Annex B (ECMAScript)
+*asynquence* is obviously not the only option for good async coding; certainly there are many great libraries in this space. But *asynquence* provides a unique perspective by combining the best of all these patterns into a single library, and moreover is built on a single basic abstraction: the (async) sequence.
 
-It's a little known fact that the official name of the language is ECMAScript (referring to the ECMA standards body that manages it). What then is "JavaScript"? JavaScript is the common tradename of the language, of course, but more appropriately, JavaScript is basically the browser implementation of the spec.
+My premise is that sophisticated JS programs often need bits and pieces of various different asynchronous patterns woven together, and this is usually left entirely up to each developer to figure out. Instead of having to bring in two or more different async libraries that focus on different aspects of asynchrony, *asynquence* unifies them into variated sequence steps, with just one core library to learn and deploy.
 
-The official ECMAScript specification includes "Annex B," which discusses specific deviations from the official spec for the purposes of JS compatibility in browsers.
+I believe the value is strong enough with *asynquence* to make async flow control programming with Promise-style semantics super easy to accomplish, so that's why we'll exclusively focus on that library here.
 
-The proper way to consider these deviations is that they are only reliably present/valid if your code is running in a browser. If your code always runs in browsers, you won't see any observable difference. If not (like if it can run in node.js, Rhino, etc.), or you're not sure, tread carefully.
+To begin, I'll explain the design principles behind *asynquence*, and then we'll illustrate how its API works with code examples.
 
-The main compatibility differences:
+## Sequences, Abstraction Design
 
-* Octal number literals are allowed, such as `0123` (decimal `83`) in non-`strict mode`.
-* `window.escape(..)` and `window.unescape(..)` allow you to escape or unescape strings with `%`-delimited hexadecimal escape sequences. For example: `window.escape( "?foo=97%&bar=3%" )` produces `"%3Ffoo%3D97%25%26bar%3D3%25"`.
-* `String.prototype.substr` is quite similar to `String.prototype.substring`, except that instead of the second parameter being the ending index (noninclusive), the second parameter is the `length` (number of characters to include).
+Understanding *asynquence* begins with understanding a fundamental abstraction: any series of steps for a task, whether they separately are synchronous or asynchronous, can be collectively thought of as a "sequence". In other words, a sequence is a container that represents a task, and is comprised of individual (potentially async) steps to complete that task.
 
-### Web ECMAScript
+Each step in the sequence is controlled under the covers by a Promise (see Chapter 3). That is, every step you add to a sequence implicitly creates a Promise that is wired to the previous end of the sequence. Because of the semantics of Promises, every single step advancement in a sequence is asynchronous, even if you synchronously complete the step.
 
-The Web ECMAScript specification (http://javascript.spec.whatwg.org/) covers the differences between the official ECMAScript specification and the current JavaScript implementations in browsers.
+Moreover, a sequence will always proceed linearly from step to step, meaning that step 2 always comes after step 1 finishes, and so on.
 
-In other words, these items are "required" of browsers (to be compatible with each other) but are not (as of the time of writing) listed in the "Annex B" section of the official spec:
+Of course, a new sequence can be forked off an existing sequence, meaning the fork only occurs once the main sequence reaches that point in the flow. Sequences can also be combined in various ways, including having one sequence subsumed by another sequence at a particular point in the flow.
 
-* `<!--` and `-->` are valid single-line comment delimiters.
-* `String.prototype` additions for returning HTML-formatted strings: `anchor(..)`, `big(..)`, `blink(..)`, `bold(..)`, `fixed(..)`, `fontcolor(..)`, `fontsize(..)`, `italics(..)`, `link(..)`, `small(..)`, `strike(..)`, and `sub(..)`. **Note:** These are very rarely used in practice, and are generally discouraged in favor of other built-in DOM APIs or user-defined utilities.
-* `RegExp` extensions: `RegExp.$1` .. `RegExp.$9` (match-groups) and `RegExp.lastMatch`/`RegExp["$&"]` (most recent match).
-* `Function.prototype` additions: `Function.prototype.arguments` (aliases internal `arguments` object) and `Function.caller` (aliases internal `arguments.caller`). **Note:** `arguments` and thus `arguments.caller` are deprecated, so you should avoid using them if possible. That goes doubly so for these aliases -- don't use them!
+A sequence is kind of like a Promise chain. However, with Promise chains, there is no "handle" to grab that references the entire chain. Whichever Promise you have a reference to only represents the current step in the chain plus any other steps hanging off it. Essentially, you cannot hold a reference to a Promise chain unless you hold a reference to the first Promise in the chain.
 
-**Note:** Some other minor and rarely used deviations are not included in our list here. See the external "Annex B" and "Web ECMAScript" documents for more detailed information as needed.
+There are many cases where it turns out to be quite useful to have a handle that references the entire sequence collectively. The most important of those cases is with sequence abort/cancel. As we covered extensively in Chapter 3, Promises themselves should never be able to be canceled, as this violates a fundamental design imperative: external immutability.
 
-Generally speaking, all these differences are rarely used, so the deviations from the specification are not significant concerns. **Just be careful** if you rely on any of them.
+But sequences have no such immutability design principle, mostly because sequences are not passed around as future-value containers that need immutable value semantics. So sequences are the proper level of abstraction to handle abort/cancel behavior. *asynquence* sequences can be `abort()`ed at any time, and the sequence will stop at that point and not go for any reason.
 
-## Host Objects
+There's plenty more reasons to prefer a sequence abstraction on top of Promise chains, for flow control purposes.
 
-The well-covered rules for how variables behave in JS have exceptions to them when it comes to variables that are auto-defined, or otherwise created and provided to JS by the environment that hosts your code (browser, etc.) -- so called, "host objects" (which include both built-in `object`s and `function`s).
+First, Promise chaining is a rather manual process -- one that can get pretty tedious once you start creating and chaining Promises across a wide swath of your programs -- and this tedium can act counterproductively to dissuade the developer from using Promises in places where they are quite appropriate.
 
-For example:
+Abstractions are meant to reduce boilerplate and tedium, so the sequence abstraction is a good solution to this problem. With Promises, your focus is on the individual step, and there's little assumption that you will keep the chain going. With sequences, the opposite approach is taken, assuming the sequence will keep having more steps added indefinitely.
 
-```js
-var a = document.createElement( "div" );
+This abstraction complexity reduction is especially powerful when you start thinking about higher-order Promise patterns (beyond `race([..])` and `all([..])`.
 
-typeof a;								// "object" -- as expected
-Object.prototype.toString.call( a );	// "[object HTMLDivElement]"
+For example, in the middle of a sequence, you may want to express a step that is conceptually like a `try..catch` in that the step will always result in success, either the intended main success resolution or a positive nonerror signal for the caught error. Or, you might want to express a step that is like a retry/until loop, where it keeps trying the same step over and over until success occurs.
 
-a.tagName;								// "DIV"
-```
+These sorts of abstractions are quite nontrivial to express using only Promise primitives, and doing so in the middle of an existing Promise chain is not pretty. But if you abstract your thinking to a sequence, and consider a step as a wrapper around a Promise, that step wrapper can hide such details, freeing you to think about the flow control in the most sensible way without being bothered by the details.
 
-`a` is not just an `object`, but a special host object because it's a DOM element. It has a different internal `[[Class]]` value (`"HTMLDivElement"`) and comes with predefined (and often unchangeable) properties.
+Second, and perhaps more importantly, thinking of async flow control in terms of steps in a sequence allows you to abstract out the details of what types of asynchronicity are involved with each individual step. Under the covers, a Promise will always control the step, but above the covers, that step can look either like a continuation callback (the simple default), or like a real Promise, or as a run-to-completion generator, or ... Hopefully, you get the picture.
 
-Another such quirk has already been covered, in the "Falsy Objects" section in Chapter 4: some objects can exist but when coerced to `boolean` they (confoundingly) will coerce to `false` instead of the expected `true`.
+Third, sequences can more easily be twisted to adapt to different modes of thinking, such as event-, stream-, or reactive-based coding. *asynquence* provides a pattern I call "reactive sequences" (which we'll cover later) as a variation on the "reactive observable" ideas in RxJS ("Reactive Extensions"), that lets a repeatable event fire off a new sequence instance each time. Promises are one-shot-only, so it's quite awkward to express repetitious asynchrony with Promises alone.
 
-Other behavior variations with host objects to be aware of can include:
+Another alternate mode of thinking inverts the resolution/control capability in a pattern I call "iterable sequences". Instead of each individual step internally controlling its own completion (and thus advancement of the sequence), the sequence is inverted so the advancement control is through an external iterator, and each step in the *iterable sequence* just responds to the `next(..)` *iterator* control.
 
-* not having access to normal `object` built-ins like `toString()`
-* not being overwritable
-* having certain predefined read-only properties
-* having methods that cannot be `this`-overriden to other objects
-* and more...
+We'll explore all of these different variations as we go throughout the rest of this appendix, so don't worry if we ran over those bits far too quickly just now.
 
-Host objects are critical to making our JS code work with its surrounding environment. But it's important to note when you're interacting with a host object and be careful assuming its behaviors, as they will quite often not conform to regular JS `object`s.
+The takeaway is that sequences are a more powerful and sensible abstraction for complex asynchrony than just Promises (Promise chains) or just generators, and *asynquence* is designed to express that abstraction with just the right level of sugar to make async programming more understandable and more enjoyable.
 
-One notable example of a host object that you probably interact with regularly is the `console` object and its various functions (`log(..)`, `error(..)`, etc.). The `console` object is provided by the *hosting environment* specifically so your code can interact with it for various development-related output tasks.
+## *asynquence* API
 
-In browsers, `console` hooks up to the developer tools' console display, whereas in node.js and other server-side JS environments, `console` is generally connected to the standard-output (`stdout`) and standard-error (`stderr`) streams of the JavaScript environment system process.
+To start off, the way you create a sequence (an *asynquence* instance) is with the `ASQ(..)` function. An `ASQ()` call with no parameters creates an empty initial sequence, whereas passing one or more values or functions to `ASQ(..)` sets up the sequence with each argument representing the initial steps of the sequence.
 
-## Global DOM Variables
+**Note:** For the purposes of all code examples here, I will use the *asynquence* top-level identifier in global browser usage: `ASQ`. If you include and use *asynquence* through a module system (browser or server), you of course can define whichever symbol you prefer, and *asynquence* won't care!
 
-You're probably aware that declaring a variable in the global scope (with or without `var`) creates not only a global variable, but also its mirror: a property of the same name on the `global` object (`window` in the browser).
+Many of the API methods discussed here are built into the core of *asynquence*, but others are provided through including the optional "contrib" plug-ins package. See the documentation for *asynquence* for whether a method is built in or defined via plug-in: http://github.com/getify/asynquence
 
-But what may be less common knowledge is that (because of legacy browser behavior) creating DOM elements with `id` attributes creates global variables of those same names. For example:
+### Steps
 
-```html
-<div id="foo"></div>
-```
+If a function represents a normal step in the sequence, that function is invoked with the first parameter being the continuation callback, and any subsequent parameters being any messages passed on from the previous step. The step will not complete until the continuation callback is called. Once it's called, any arguments you pass to it will be sent along as messages to the next step in the sequence.
 
-And:
+To add an additional normal step to the sequence, call `then(..)` (which has essentially the exact same semantics as the `ASQ(..)` call):
 
 ```js
-if (typeof foo == "undefined") {
-	foo = 42;		// will never run
-}
-
-console.log( foo );	// HTML element
-```
-
-You're perhaps used to managing global variable tests (using `typeof` or `.. in window` checks) under the assumption that only JS code creates such variables, but as you can see, the contents of your hosting HTML page can also create them, which can easily throw off your existence check logic if you're not careful.
-
-This is yet one more reason why you should, if at all possible, avoid using global variables, and if you have to, use variables with unique names that won't likely collide. But you also need to make sure not to collide with the HTML content as well as any other code.
-
-## Native Prototypes
-
-One of the most widely known and classic pieces of JavaScript *best practice* wisdom is: **never extend native prototypes**.
-
-Whatever method or property name you come up with to add to `Array.prototype` that doesn't (yet) exist, if it's a useful addition and well-designed, and properly named, there's a strong chance it *could* eventually end up being added to the spec -- in which case your extension is now in conflict.
-
-Here's a real example that actually happened to me that illustrates this point well.
-
-I was building an embeddable widget for other websites, and my widget relied on jQuery (though pretty much any framework would have suffered this gotcha). It worked on almost every site, but we ran across one where it was totally broken.
-
-After almost a week of analysis/debugging, I found that the site in question had, buried deep in one of its legacy files, code that looked like this:
-
-```js
-// Netscape 4 doesn't have Array.push
-Array.prototype.push = function(item) {
-	this[this.length] = item;
-};
-```
-
-Aside from the crazy comment (who cares about Netscape 4 anymore!?), this looks reasonable, right?
-
-The problem is, `Array.prototype.push` was added to the spec sometime subsequent to this Netscape 4 era coding, but what was added is not compatible with this code. The standard `push(..)` allows multiple items to be pushed at once. This hacked one ignores the subsequent items.
-
-Basically all JS frameworks have code that relies on `push(..)` with multiple elements. In my case, it was code around the CSS selector engine that was completely busted. But there could conceivably be dozens of other places susceptible.
-
-The developer who originally wrote that `push(..)` hack had the right instinct to call it `push`, but didn't foresee pushing multiple elements. They were certainly acting in good faith, but they created a landmine that didn't go off until almost 10 years later when I unwittingly came along.
-
-There's multiple lessons to take away on all sides.
-
-First, don't extend the natives unless you're absolutely sure your code is the only code that will ever run in that environment. If you can't say that 100%, then extending the natives is dangerous. You must weigh the risks.
-
-Next, don't unconditionally define extensions (because you can overwrite natives accidentally). In this particular example, had the code said this:
-
-```js
-if (!Array.prototype.push) {
-	// Netscape 4 doesn't have Array.push
-	Array.prototype.push = function(item) {
-		this[this.length] = item;
-	};
-}
-```
-
-The `if` statement guard would have only defined this hacked `push()` for JS environments where it didn't exist. In my case, that probably would have been OK. But even this approach is not without risk:
-
-1. If the site's code (for some crazy reason!) was relying on a `push(..)` that ignored multiple items, that code would have been broken years ago when the standard `push(..)` was rolled out.
-2. If any other library had come in and hacked in a `push(..)` ahead of this `if` guard, and it did so in an incompatible way, that would have broken the site at that time.
-
-What that highlights is an interesting question that, frankly, doesn't get enough attention from JS developers: **Should you EVER rely on native built-in behavior** if your code is running in any environment where it's not the only code present?
-
-The strict answer is **no**, but that's awfully impractical. Your code usually can't redefine its own private untouchable versions of all built-in behavior relied on. Even if you *could*, that's pretty wasteful.
-
-So, should you feature-test for the built-in behavior as well as compliance-testing that it does what you expect? And what if that test fails -- should your code just refuse to run?
-
-```js
-// don't trust Array.prototype.push
-(function(){
-	if (Array.prototype.push) {
-		var a = [];
-		a.push(1,2);
-		if (a[0] === 1 && a[1] === 2) {
-			// tests passed, safe to use!
-			return;
-		}
+ASQ(
+	// step 1
+	function(done){
+		setTimeout( function(){
+			done( "Hello" );
+		}, 100 );
+	},
+	// step 2
+	function(done,greeting) {
+		setTimeout( function(){
+			done( greeting + " World" );
+		}, 100 );
 	}
+)
+// step 3
+.then( function(done,msg){
+	setTimeout( function(){
+		done( msg.toUpperCase() );
+	}, 100 );
+} )
+// step 4
+.then( function(done,msg){
+	console.log( msg );			// HELLO WORLD
+} );
+```
 
-	throw Error(
-		"Array#push() is missing/broken!"
+**Note:** Though the name `then(..)` is identical to the native Promises API, this `then(..)` is different. You can pass as few or as many functions or values to `then(..)` as you'd like, and each is taken as a separate step. There's no two-callback fulfilled/rejected semantics involved.
+
+Unlike with Promises, where to chain one Promise to the next you have to create and `return` that Promise from a `then(..)` fulfillment handler, with *asynquence*, all you need to do is call the continuation callback -- I always call it `done()` but you can name it whatever suits you -- and optionally pass it completion messages as arguments.
+
+Each step defined by `then(..)` is assumed to be asynchronous. If you have a step that's synchronous, you can either just call `done(..)` right away, or you can use the simpler `val(..)` step helper:
+
+```js
+// step 1 (sync)
+ASQ( function(done){
+	done( "Hello" );	// manually synchronous
+} )
+// step 2 (sync)
+.val( function(greeting){
+	return greeting + " World";
+} )
+// step 3 (async)
+.then( function(done,msg){
+	setTimeout( function(){
+		done( msg.toUpperCase() );
+	}, 100 );
+} )
+// step 4 (sync)
+.val( function(msg){
+	console.log( msg );
+} );
+```
+
+As you can see, `val(..)`-invoked steps don't receive a continuation callback, as that part is assumed for you -- and the parameter list is less cluttered as a result! To send a message along to the next step, you simply use `return`.
+
+Think of `val(..)` as representing a synchronous "value-only" step, which is useful for synchronous value operations, logging, and the like.
+
+### Errors
+
+One important difference with *asynquence* compared to Promises is with error handling.
+
+With Promises, each individual Promise (step) in a chain can have its own independent error, and each subsequent step has the ability to handle the error or not. The main reason for this semantic comes (again) from the focus on individual Promises rather than on the chain (sequence) as a whole.
+
+I believe that most of the time, an error in one part of a sequence is generally not recoverable, so the subsequent steps in the sequence are moot and should be skipped. So, by default, an error at any step of a sequence throws the entire sequence into error mode, and the rest of the normal steps are ignored.
+
+If you *do* need to have a step where its error is recoverable, there are several different API methods that can accommodate, such as `try(..)` -- previously mentioned as a kind of `try..catch` step -- or `until(..)` -- a retry loop that keeps attempting the step until it succeeds or you manually `break()` the loop. *asynquence* even has `pThen(..)` and `pCatch(..)` methods, which work identically to how normal Promise `then(..)` and `catch(..)` work (see Chapter 3), so you can do localized mid-sequence error handling if you so choose.
+
+The point is, you have both options, but the more common one in my experience is the default. With Promises, to get a chain of steps to ignore all steps once an error occurs, you have to take care not to register a rejection handler at any step; otherwise, that error gets swallowed as handled, and the sequence may continue (perhaps unexpectedly). This kind of desired behavior is a bit awkward to properly and reliably handle.
+
+To register a sequence error notification handler, *asynquence* provides an `or(..)` sequence method, which also has an alias of `onerror(..)`. You can call this method anywhere in the sequence, and you can register as many handlers as you'd like. That makes it easy for multiple different consumers to listen in on a sequence to know if it failed or not; it's kind of like an error event handler in that respect.
+
+Just like with Promises, all JS exceptions become sequence errors, or you can programmatically signal a sequence error:
+
+```js
+var sq = ASQ( function(done){
+	setTimeout( function(){
+		// signal an error for the sequence
+		done.fail( "Oops" );
+	}, 100 );
+} )
+.then( function(done){
+	// will never get here
+} )
+.or( function(err){
+	console.log( err );			// Oops
+} )
+.then( function(done){
+	// won't get here either
+} );
+
+// later
+
+sq.or( function(err){
+	console.log( err );			// Oops
+} );
+```
+
+Another really important difference with error handling in *asynquence* compared to native Promises is the default behavior of "unhandled exceptions". As we discussed at length in Chapter 3, a rejected Promise without a registered rejection handler will just silently hold (aka swallow) the error; you have to remember to always end a chain with a final `catch(..)`.
+
+In *asynquence*, the assumption is reversed.
+
+If an error occurs on a sequence, and it **at that moment** has no error handlers registered, the error is reported to the `console`. In other words, unhandled rejections are by default always reported so as not to be swallowed and missed.
+
+As soon as you register an error handler against a sequence, it opts that sequence out of such reporting, to prevent duplicate noise.
+
+There may, in fact, be cases where you want to create a sequence that may go into the error state before you have a chance to register the handler. This isn't common, but it can happen from time to time.
+
+In those cases, you can also **opt a sequence instance out** of error reporting by calling `defer()` on the sequence. You should only opt out of error reporting if you are sure that you're going to eventually handle such errors:
+
+```js
+var sq1 = ASQ( function(done){
+	doesnt.Exist();			// will throw exception to console
+} );
+
+var sq2 = ASQ( function(done){
+	doesnt.Exist();			// will throw only a sequence error
+} )
+// opt-out of error reporting
+.defer();
+
+setTimeout( function(){
+	sq1.or( function(err){
+		console.log( err );	// ReferenceError
+	} );
+
+	sq2.or( function(err){
+		console.log( err );	// ReferenceError
+	} );
+}, 100 );
+
+// ReferenceError (from sq1)
+```
+
+This is better error handling behavior than Promises themselves have, because it's the Pit of Success, not the Pit of Failure (see Chapter 3).
+
+**Note:** If a sequence is piped into (aka subsumed by) another sequence -- see "Combining Sequences"  for a complete description -- then the source sequence is opted out of error reporting, but now the target sequence's error reporting or lack thereof must be considered.
+
+### Parallel Steps
+
+Not all steps in your sequences will have just a single (async) task to perform; some will need to perform multiple steps "in parallel" (concurrently). A step in a sequence in which multiple substeps are processing concurrently is called a `gate(..)` -- there's an `all(..)` alias if you prefer -- and is directly symmetric to native `Promise.all([..])`.
+
+If all the steps in the `gate(..)` complete successfully, all success messages will be passed to the next sequence step. If any of them generate errors, the whole sequence immediately goes into an error state.
+
+Consider:
+
+```js
+ASQ( function(done){
+	setTimeout( done, 100 );
+} )
+.gate(
+	function(done){
+		setTimeout( function(){
+			done( "Hello" );
+		}, 100 );
+	},
+	function(done){
+		setTimeout( function(){
+			done( "World", "!" );
+		}, 100 );
+	}
+)
+.val( function(msg1,msg2){
+	console.log( msg1 );	// Hello
+	console.log( msg2 );	// [ "World", "!" ]
+} );
+```
+
+For illustration, let's compare that example to native Promises:
+
+```js
+new Promise( function(resolve,reject){
+	setTimeout( resolve, 100 );
+} )
+.then( function(){
+	return Promise.all( [
+		new Promise( function(resolve,reject){
+			setTimeout( function(){
+				resolve( "Hello" );
+			}, 100 );
+		} ),
+		new Promise( function(resolve,reject){
+			setTimeout( function(){
+				// note: we need a [ ] array here
+				resolve( [ "World", "!" ] );
+			}, 100 );
+		} )
+	] );
+} )
+.then( function(msgs){
+	console.log( msgs[0] );	// Hello
+	console.log( msgs[1] );	// [ "World", "!" ]
+} );
+```
+
+Yuck. Promises require a lot more boilerplate overhead to express the same asynchronous flow control. That's a great illustration of why the *asynquence* API and abstraction make dealing with Promise steps a lot nicer. The improvement only goes higher the more complex your asynchrony is.
+
+#### Step Variations
+
+There are several variations in the contrib plug-ins on *asynquence*'s `gate(..)` step type that can be quite helpful:
+
+* `any(..)` is like `gate(..)`, except just one segment has to eventually succeed to proceed on the main sequence.
+* `first(..)` is like `any(..)`, except as soon as any segment succeeds, the main sequence proceeds (ignoring subsequent results from other segments).
+* `race(..)` (symmetric with `Promise.race([..])`) is like `first(..)`, except the main sequence proceeds as soon as any segment completes (either success or failure).
+* `last(..)` is like `any(..)`, except only the latest segment to complete successfully sends its message(s) along to the main sequence.
+* `none(..)` is the inverse of `gate(..)`: the main sequence proceeds only if all the segments fail (with all segment error message(s) transposed as success message(s) and vice versa).
+
+Let's first define some helpers to make illustration cleaner:
+
+```js
+function success1(done) {
+	setTimeout( function(){
+		done( 1 );
+	}, 100 );
+}
+
+function success2(done) {
+	setTimeout( function(){
+		done( 2 );
+	}, 100 );
+}
+
+function failure3(done) {
+	setTimeout( function(){
+		done.fail( 3 );
+	}, 100 );
+}
+
+function output(msg) {
+	console.log( msg );
+}
+```
+
+Now, let's demonstrate these `gate(..)` step variations:
+
+```js
+ASQ().race(
+	failure3,
+	success1
+)
+.or( output );		// 3
+
+
+ASQ().any(
+	success1,
+	failure3,
+	success2
+)
+.val( function(){
+	var args = [].slice.call( arguments );
+	console.log(
+		args		// [ 1, undefined, 2 ]
 	);
-})();
+} );
+
+
+ASQ().first(
+	failure3,
+	success1,
+	success2
+)
+.val( output );		// 1
+
+
+ASQ().last(
+	failure3,
+	success1,
+	success2
+)
+.val( output );		// 2
+
+ASQ().none(
+	failure3
+)
+.val( output )		// 3
+.none(
+	failure3
+	success1
+)
+.or( output );		// 1
 ```
 
-In theory, that sounds plausible, but it's also pretty impractical to design tests for every single built-in method.
-
-So, what should we do? Should we *trust but verify* (feature- and compliance-test) **everything**? Should we just assume existence is compliance and let breakage (caused by others) bubble up as it will?
-
-There's no great answer. The only fact that can be observed is that extending native prototypes is the only way these things bite you.
-
-If you don't do it, and no one else does in the code in your application, you're safe. Otherwise, you should build in at least a little bit of skepticism, pessimism, and expectation of possible breakage.
-
-Having a full set of unit/regression tests of your code that runs in all known environments is one way to surface some of these issues earlier, but it doesn't do anything to actually protect you from these conflicts.
-
-### Shims/Polyfills
-
-It's usually said that the only safe place to extend a native is in an older (non-spec-compliant) environment, since that's unlikely to ever change -- new browsers with new spec features replace older browsers rather than amending them.
-
-If you could see into the future, and know for sure what a future standard was going to be, like for `Array.prototype.foobar`, it'd be totally safe to make your own compatible version of it to use now, right?
+Another step variation is `map(..)`, which lets you asynchronously map elements of an array to different values, and the step doesn't proceed until all the mappings are complete. `map(..)` is very similar to `gate(..)`, except it gets the initial values from an array instead of from separately specified functions, and also because you define a single function callback to operate on each value:
 
 ```js
-if (!Array.prototype.foobar) {
-	// silly, silly
-	Array.prototype.foobar = function() {
-		this.push( "foo", "bar" );
-	};
+function double(x,done) {
+	setTimeout( function(){
+		done( x * 2 );
+	}, 100 );
+}
+
+ASQ().map( [1,2,3], double )
+.val( output );					// [2,4,6]
+```
+
+Also, `map(..)` can receive either of its parameters (the array or the callback) from messages passed from the previous step:
+
+```js
+function plusOne(x,done) {
+	setTimeout( function(){
+		done( x + 1 );
+	}, 100 );
+}
+
+ASQ( [1,2,3] )
+.map( double )			// message `[1,2,3]` comes in
+.map( plusOne )			// message `[2,4,6]` comes in
+.val( output );			// [3,5,7]
+```
+
+Another variation is `waterfall(..)`, which is kind of like a mixture between `gate(..)`'s message collection behavior but `then(..)`'s sequential processing.
+
+Step 1 is first executed, then the success message from step 1 is given to step 2, and then both success messages go to step 3, and then all three success messages go to step 4, and so on, such that the messages sort of collect and cascade down the "waterfall".
+
+Consider:
+
+```js
+function double(done) {
+	var args = [].slice.call( arguments, 1 );
+	console.log( args );
+
+	setTimeout( function(){
+		done( args[args.length - 1] * 2 );
+	}, 100 );
+}
+
+ASQ( 3 )
+.waterfall(
+	double,					// [ 3 ]
+	double,					// [ 6 ]
+	double,					// [ 6, 12 ]
+	double					// [ 6, 12, 24 ]
+)
+.val( function(){
+	var args = [].slice.call( arguments );
+	console.log( args );	// [ 6, 12, 24, 48 ]
+} );
+```
+
+If at any point in the "waterfall" an error occurs, the whole sequence immediately goes into an error state.
+
+#### Error Tolerance
+
+Sometimes you want to manage errors at the step level and not let them necessarily send the whole sequence into the error state. *asynquence* offers two step variations for that purpose.
+
+`try(..)` attempts a step, and if it succeeds, the sequence proceeds as normal, but if the step fails, the failure is turned into a success message formated as `{ catch: .. }` with the error message(s) filled in:
+
+```js
+ASQ()
+.try( success1 )
+.val( output )			// 1
+.try( failure3 )
+.val( output )			// { catch: 3 }
+.or( function(err){
+	// never gets here
+} );
+```
+
+You could instead set up a retry loop using `until(..)`, which tries the step and if it fails, retries the step again on the next event loop tick, and so on.
+
+This retry loop can continue indefinitely, but if you want to break out of the loop, you can call the `break()` flag on the completion trigger, which sends the main sequence into an error state:
+
+```js
+var count = 0;
+
+ASQ( 3 )
+.until( double )
+.val( output )					// 6
+.until( function(done){
+	count++;
+
+	setTimeout( function(){
+		if (count < 5) {
+			done.fail();
+		}
+		else {
+			// break out of the `until(..)` retry loop
+			done.break( "Oops" );
+		}
+	}, 100 );
+} )
+.or( output );					// Oops
+```
+
+#### Promise-Style Steps
+
+If you would prefer to have, inline in your sequence, Promise-style semantics like Promises' `then(..)` and `catch(..)` (see Chapter 3), you can use the `pThen` and `pCatch` plug-ins:
+
+```js
+ASQ( 21 )
+.pThen( function(msg){
+	return msg * 2;
+} )
+.pThen( output )				// 42
+.pThen( function(){
+	// throw an exception
+	doesnt.Exist();
+} )
+.pCatch( function(err){
+	// caught the exception (rejection)
+	console.log( err );			// ReferenceError
+} )
+.val( function(){
+	// main sequence is back in a
+	// success state because previous
+	// exception was caught by
+	// `pCatch(..)`
+} );
+```
+
+`pThen(..)` and `pCatch(..)` are designed to run in the sequence, but behave as if it was a normal Promise chain. As such, you can either resolve genuine Promises or *asynquence* sequences from the "fulfillment" handler passed to `pThen(..)` (see Chapter 3).
+
+### Forking Sequences
+
+One feature that can be quite useful about Promises is that you can attach multiple `then(..)` handler registrations to the same promise, effectively "forking" the flow-control at that promise:
+
+```js
+var p = Promise.resolve( 21 );
+
+// fork 1 (from `p`)
+p.then( function(msg){
+	return msg * 2;
+} )
+.then( function(msg){
+	console.log( msg );		// 42
+} )
+
+// fork 2 (from `p`)
+p.then( function(msg){
+	console.log( msg );		// 21
+} );
+```
+
+The same "forking" is easy in *asynquence* with `fork()`:
+
+```js
+var sq = ASQ(..).then(..).then(..);
+
+var sq2 = sq.fork();
+
+// fork 1
+sq.then(..)..;
+
+// fork 2
+sq2.then(..)..;
+```
+
+### Combining Sequences
+
+The reverse of `fork()`ing, you can combine two sequences by subsuming one into another, using the `seq(..)` instance method:
+
+```js
+var sq = ASQ( function(done){
+	setTimeout( function(){
+		done( "Hello World" );
+	}, 200 );
+} );
+
+ASQ( function(done){
+	setTimeout( done, 100 );
+} )
+// subsume `sq` sequence into this sequence
+.seq( sq )
+.val( function(msg){
+	console.log( msg );		// Hello World
+} )
+```
+
+`seq(..)` can either accept a sequence itself, as shown here, or a function. If a function, it's expected that the function when called will return a sequence, so the preceding code could have been done with:
+
+```js
+// ..
+.seq( function(){
+	return sq;
+} )
+// ..
+```
+
+Also, that step could instead have been accomplished with a `pipe(..)`:
+
+```js
+// ..
+.then( function(done){
+	// pipe `sq` into the `done` continuation callback
+	sq.pipe( done );
+} )
+// ..
+```
+
+When a sequence is subsumed, both its success message stream and its error stream are piped in.
+
+**Note:** As mentioned in an earlier note, piping (manually with `pipe(..)` or automatically with `seq(..)`) opts the source sequence out of error-reporting, but doesn't affect the error reporting status of the target sequence.
+
+## Value and Error Sequences
+
+If any step of a sequence is just a normal value, that value is just mapped to that step's completion message:
+
+```js
+var sq = ASQ( 42 );
+
+sq.val( function(msg){
+	console.log( msg );		// 42
+} );
+```
+
+If you want to make a sequence that's automatically errored:
+
+```js
+var sq = ASQ.failed( "Oops" );
+
+ASQ()
+.seq( sq )
+.val( function(msg){
+	// won't get here
+} )
+.or( function(err){
+	console.log( err );		// Oops
+} );
+```
+
+You also may want to automatically create a delayed-value or a delayed-error sequence. Using the `after` and `failAfter` contrib plug-ins, this is easy:
+
+```js
+var sq1 = ASQ.after( 100, "Hello", "World" );
+var sq2 = ASQ.failAfter( 100, "Oops" );
+
+sq1.val( function(msg1,msg2){
+	console.log( msg1, msg2 );		// Hello World
+} );
+
+sq2.or( function(err){
+	console.log( err );				// Oops
+} );
+```
+
+You can also insert a delay in the middle of a sequence using `after(..)`:
+
+```js
+ASQ( 42 )
+// insert a delay into the sequence
+.after( 100 )
+.val( function(msg){
+	console.log( msg );		// 42
+} );
+```
+
+## Promises and Callbacks
+
+I think *asynquence* sequences provide a lot of value on top of native Promises, and for the most part you'll find it more pleasant and more powerful to work at that level of abstraction. However, integrating *asynquence* with other non-*asynquence* code will be a reality.
+
+You can easily subsume a promise (e.g., thenable -- see Chapter 3) into a sequence using the `promise(..)` instance method:
+
+```js
+var p = Promise.resolve( 42 );
+
+ASQ()
+.promise( p )			// could also: `function(){ return p; }`
+.val( function(msg){
+	console.log( msg );	// 42
+} );
+```
+
+And to go the opposite direction and fork/vend a promise from a sequence at a certain step, use the `toPromise` contrib plug-in:
+
+```js
+var sq = ASQ.after( 100, "Hello World" );
+
+sq.toPromise()
+// this is a standard promise chain now
+.then( function(msg){
+	return msg.toUpperCase();
+} )
+.then( function(msg){
+	console.log( msg );		// HELLO WORLD
+} );
+```
+
+To adapt *asynquence* to systems using callbacks, there are several helper facilities. To automatically generate an "error-first style" callback from your sequence to wire into a callback-oriented utility, use `errfcb`:
+
+```js
+var sq = ASQ( function(done){
+	// note: expecting "error-first style" callback
+	someAsyncFuncWithCB( 1, 2, done.errfcb )
+} )
+.val( function(msg){
+	// ..
+} )
+.or( function(err){
+	// ..
+} );
+
+// note: expecting "error-first style" callback
+anotherAsyncFuncWithCB( 1, 2, sq.errfcb() );
+```
+
+You also may want to create a sequence-wrapped version of a utility -- compare to "promisory" in Chapter 3 and "thunkory" in Chapter 4 -- and *asynquence* provides `ASQ.wrap(..)` for that purpose:
+
+```js
+var coolUtility = ASQ.wrap( someAsyncFuncWithCB );
+
+coolUtility( 1, 2 )
+.val( function(msg){
+	// ..
+} )
+.or( function(err){
+	// ..
+} );
+```
+
+**Note:** For the sake of clarity (and for fun!), let's coin yet another term, for a sequence-producing function that comes from `ASQ.wrap(..)`, like `coolUtility` here. I propose "sequory" ("sequence" + "factory").
+
+## Iterable Sequences
+
+The normal paradigm for a sequence is that each step is responsible for completing itself, which is what advances the sequence. Promises work the same way.
+
+The unfortunate part is that sometimes you need external control over a Promise/step, which leads to awkward "capability extraction".
+
+Consider this Promises example:
+
+```js
+var domready = new Promise( function(resolve,reject){
+	// don't want to put this here, because
+	// it belongs logically in another part
+	// of the code
+	document.addEventListener( "DOMContentLoaded", resolve );
+} );
+
+// ..
+
+domready.then( function(){
+	// DOM is ready!
+} );
+```
+
+The "capability extraction" anti-pattern with Promises looks like this:
+
+```js
+var ready;
+
+var domready = new Promise( function(resolve,reject){
+	// extract the `resolve()` capability
+	ready = resolve;
+} );
+
+// ..
+
+domready.then( function(){
+	// DOM is ready!
+} );
+
+// ..
+
+document.addEventListener( "DOMContentLoaded", ready );
+```
+
+**Note:** This anti-pattern is an awkward code smell, in my opinion, but some developers like it, for reasons I can't grasp.
+
+*asynquence* offers an inverted sequence type I call "iterable sequences", which externalizes the control capability (it's quite useful in use cases like the `domready`):
+
+```js
+// note: `domready` here is an *iterator* that
+// controls the sequence
+var domready = ASQ.iterable();
+
+// ..
+
+domready.val( function(){
+	// DOM is ready
+} );
+
+// ..
+
+document.addEventListener( "DOMContentLoaded", domready.next );
+```
+
+There's more to iterable sequences than what we see in this scenario. We'll come back to them in Appendix B.
+
+## Running Generators
+
+In Chapter 4, we derived a utility called `run(..)` which can run generators to completion, listening for `yield`ed Promises and using them to async resume the generator. *asynquence* has just such a utility built in, called `runner(..)`.
+
+Let's first set up some helpers for illustration:
+
+```js
+function doublePr(x) {
+	return new Promise( function(resolve,reject){
+		setTimeout( function(){
+			resolve( x * 2 );
+		}, 100 );
+	} );
+}
+
+function doubleSeq(x) {
+	return ASQ( function(done){
+		setTimeout( function(){
+			done( x * 2)
+		}, 100 );
+	} );
 }
 ```
 
-If there's already a spec for `Array.prototype.foobar`, and the specified behavior is equal to this logic, you're pretty safe in defining such a snippet, and in that case it's generally called a "polyfill" (or "shim").
-
-Such code is **very** useful to include in your code base to "patch" older browser environments that aren't updated to the newest specs. Using polyfills is a great way to create predictable code across all your supported environments.
-
-**Tip:** ES5-Shim (https://github.com/es-shims/es5-shim) is a comprehensive collection of shims/polyfills for bringing a project up to ES5 baseline, and similarly, ES6-Shim (https://github.com/es-shims/es6-shim) provides shims for new APIs added as of ES6. While APIs can be shimmed/polyfilled, new syntax generally cannot. To bridge the syntactic divide, you'll want to also use an ES6-to-ES5 transpiler like Traceur (https://github.com/google/traceur-compiler/wiki/GettingStarted).
-
-If there's likely a coming standard, and most discussions agree what it's going to be called and how it will operate, creating the ahead-of-time polyfill for future-facing standards compliance is called "prollyfill" (probably-fill).
-
-The real catch is if some new standard behavior can't be (fully) polyfilled/prollyfilled.
-
-There's debate in the community if a partial-polyfill for the common cases is acceptable (documenting the parts that cannot be polyfilled), or if a polyfill should be avoided if it purely can't be 100% compliant to the spec.
-
-Many developers at least accept some common partial polyfills (like for instance `Object.create(..)`), because the parts that aren't covered are not parts they intend to use anyway.
-
-Some developers believe that the `if` guard around a polyfill/shim should include some form of conformance test, replacing the existing method either if it's absent or fails the tests. This extra layer of compliance testing is sometimes used to distinguish "shim" (compliance tested) from "polyfill" (existence checked).
-
-The only absolute take-away is that there is no absolute *right* answer here. Extending natives, even when done "safely" in older environments, is not 100% safe. The same goes for relying upon (possibly extended) natives in the presence of others' code.
-
-Either should always be done with caution, defensive code, and lots of obvious documentation about the risks.
-
-## `<script>`s
-
-Most browser-viewed websites/applications have more than one file that contains their code, and it's common to have a few or several `<script src=..></script>` elements in the page that load these files separately, and even a few inline-code `<script> .. </script>` elements as well.
-
-But do these separate files/code snippets constitute separate programs or are they collectively one JS program?
-
-The (perhaps surprising) reality is they act more like independent JS programs in most, but not all, respects.
-
-The one thing they *share* is the single `global` object (`window` in the browser), which means multiple files can append their code to that shared namespace and they can all interact.
-
-So, if one `script` element defines a global function `foo()`, when a second `script` later runs, it can access and call `foo()` just as if it had defined the function itself.
-
-But global variable scope *hoisting* (see the *Scope & Closures* title of this series) does not occur across these boundaries, so the following code would not work (because `foo()`'s declaration isn't yet declared), regardless of if they are (as shown) inline `<script> .. </script>` elements or externally loaded `<script src=..></script>` files:
-
-```html
-<script>foo();</script>
-
-<script>
-  function foo() { .. }
-</script>
-```
-
-But either of these *would* work instead:
-
-```html
-<script>
-  foo();
-  function foo() { .. }
-</script>
-```
-
-Or:
-
-```html
-<script>
-  function foo() { .. }
-</script>
-
-<script>foo();</script>
-```
-
-Also, if an error occurs in a `script` element (inline or external), as a separate standalone JS program it will fail and stop, but any subsequent `script`s will run (still with the shared `global`) unimpeded.
-
-You can create `script` elements dynamically from your code, and inject them into the DOM of the page, and the code in them will behave basically as if loaded normally in a separate file:
+Now, we can use `runner(..)` as a step in the middle of a sequence:
 
 ```js
-var greeting = "Hello World";
+ASQ( 10, 11 )
+.runner( function*(token){
+	var x = token.messages[0] + token.messages[1];
 
-var el = document.createElement( "script" );
+	// yield a real promise
+	x = yield doublePr( x );
 
-el.text = "function foo(){ alert( greeting );\
- } setTimeout( foo, 1000 );";
+	// yield a sequence
+	x = yield doubleSeq( x );
 
-document.body.appendChild( el );
+	return x;
+} )
+.val( function(msg){
+	console.log( msg );			// 84
+} );
 ```
 
-**Note:** Of course, if you tried the above snippet but set `el.src` to some file URL instead of setting `el.text` to the code contents, you'd be dynamically creating an externally loaded `<script src=..></script>` element.
+### Wrapped Generators
 
-One difference between code in an inline code block and that same code in an external file is that in the inline code block, the sequence of characters `</script>` cannot appear together, as (regardless of where it appears) it would be interpreted as the end of the code block. So, beware of code like:
-
-```html
-<script>
-  var code = "<script>alert( 'Hello World' )</script>";
-</script>
-```
-
-It looks harmless, but the `</script>` appearing inside the `string` literal will terminate the script block abnormally, causing an error. The most common workaround is:
+You can also create a self-packaged generator -- that is, a normal function that runs your specified generator and returns a sequence for its completion -- by `ASQ.wrap(..)`ing it:
 
 ```js
-"</sc" + "ript>";
+var foo = ASQ.wrap( function*(token){
+	var x = token.messages[0] + token.messages[1];
+
+	// yield a real promise
+	x = yield doublePr( x );
+
+	// yield a sequence
+	x = yield doubleSeq( x );
+
+	return x;
+}, { gen: true } );
+
+// ..
+
+foo( 8, 9 )
+.val( function(msg){
+	console.log( msg );			// 68
+} );
 ```
 
-Also, beware that code inside an external file will be interpreted in the character set (UTF-8, ISO-8859-8, etc.) the file is served with (or the default), but that same code in an inline `script` element in your HTML page will be interpreted by the character set of the page (or its default).
-
-**Warning:** The `charset` attribute will not work on inline script elements.
-
-Another deprecated practice with inline `script` elements is including HTML-style or X(HT)ML-style comments around inline code, like:
-
-```html
-<script>
-<!--
-alert( "Hello" );
-//-->
-</script>
-
-<script>
-<!--//--><![CDATA[//><!--
-alert( "World" );
-//--><!]]>
-</script>
-```
-
-Both of these are totally unnecessary now, so if you're still doing that, stop it!
-
-**Note:** Both `<!--` and `-->` (HTML-style comments) are actually specified as valid single-line comment delimiters (`var x = 2; <!-- valid comment` and `--> another valid line comment`) in JavaScript (see the "Web ECMAScript" section earlier), purely because of this old technique. But never use them.
-
-## Reserved Words
-
-The ES5 spec defines a set of "reserved words" in Section 7.6.1 that cannot be used as standalone variable names. Technically, there are four categories: "keywords", "future reserved words", the `null` literal, and the `true` / `false` boolean literals.
-
-Keywords are the obvious ones like `function` and `switch`. Future reserved words include things like `enum`, though many of the rest of them (`class`, `extends`, etc.) are all now actually used by ES6; there are other strict-mode only reserved words like `interface`.
-
-StackOverflow user "art4theSould" creatively worked all these reserved words into a fun little poem (http://stackoverflow.com/questions/26255/reserved-keywords-in-javascript/12114140#12114140):
-
-> Let this long package float,
-> Goto private class if short.
-> While protected with debugger case,
-> Continue volatile interface.
-> Instanceof super synchronized throw,
-> Extends final export throws.
->
-> Try import double enum?
-> - False, boolean, abstract function,
-> Implements typeof transient break!
-> Void static, default do,
-> Switch int native new.
-> Else, delete null public var
-> In return for const, true, char
-> …Finally catch byte.
-
-**Note:** This poem includes words that were reserved in ES3 (`byte`, `long`, etc.) that are no longer reserved as of ES5.
-
-Prior to ES5, the reserved words also could not be property names or keys in object literals, but that restriction no longer exists.
-
-So, this is not allowed:
-
-```js
-var import = "42";
-```
-
-But this is allowed:
-
-```js
-var obj = { import: "42" };
-console.log( obj.import );
-```
-
-You should be aware though that some older browser versions (mainly older IE) weren't completely consistent on applying these rules, so there are places where using reserved words in object property name locations can still cause issues. Carefully test all supported browser environments.
-
-## Implementation Limits
-
-The JavaScript spec does not place arbitrary limits on things such as the number of arguments to a function or the length of a string literal, but these limits exist nonetheless, because of implementation details in different engines.
-
-For example:
-
-```js
-function addAll() {
-	var sum = 0;
-	for (var i=0; i < arguments.length; i++) {
-		sum += arguments[i];
-	}
-	return sum;
-}
-
-var nums = [];
-for (var i=1; i < 100000; i++) {
-	nums.push(i);
-}
-
-addAll( 2, 4, 6 );				// 12
-addAll.apply( null, nums );		// should be: 499950000
-```
-
-In some JS engines, you'll get the correct `499950000` answer, but in others (like Safari 6.x), you'll get the error: "RangeError: Maximum call stack size exceeded."
-
-Examples of other limits known to exist:
-
-* maximum number of characters allowed in a string literal (not just a string value)
-* size (bytes) of data that can be sent in arguments to a function call (aka stack size)
-* number of parameters in a function declaration
-* maximum depth of non-optimized call stack (i.e., with recursion): how long a chain of function calls from one to the other can be
-* number of seconds a JS program can run continuously blocking the browser
-* maximum length allowed for a variable name
-* ...
-
-It's not very common at all to run into these limits, but you should be aware that limits can and do exist, and importantly that they vary between engines.
+There's a lot more awesome that `runner(..)` is capable of, but we'll come back to that in Appendix B.
 
 ## Review
 
-We know and can rely upon the fact that the JS language itself has one standard and is predictably implemented by all the modern browsers/engines. This is a very good thing!
+*asynquence* is a simple abstraction -- a sequence is a series of (async) steps -- on top of Promises, aimed at making working with various asynchronous patterns much easier, without any compromise in capability.
 
-But JavaScript rarely runs in isolation. It runs in an environment mixed in with code from third-party libraries, and sometimes it even runs in engines/environments that differ from those found in browsers.
+There are other goodies in the *asynquence* core API and its contrib plug-ins beyond what we saw in this appendix, but we'll leave that as an exercise for the reader to go check the rest of the capabilities out.
 
-Paying close attention to these issues improves the reliability and robustness of your code.
+You've now seen the essence and spirit of *asynquence*. The key take away is that a sequence is comprised of steps, and those steps can be any of dozens of different variations on Promises, or they can be a generator-run, or... The choice is up to you, you have all the freedom to weave together whatever async flow control logic is appropriate for your tasks. No more library switching to catch different async patterns.
+
+If these *asynquence* snippets have made sense to you, you're now pretty well up to speed on the library; it doesn't take that much to learn, actually!
+
+If you're still a little fuzzy on how it works (or why!), you'll want to spend a little more time examining the previous examples and playing around with *asynquence* yourself, before going on to the next appendix. Appendix B will push *asynquence* into several more advanced and powerful async patterns.
