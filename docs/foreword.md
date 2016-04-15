@@ -1,22 +1,17 @@
-# You Don't Know JS: Async & Performance
+# You Don't Know JS: ES6 & Beyond
 # Foreword
 
-Over the years, my employer has trusted me enough to conduct interviews. If we're looking for someone with skills in JavaScript, my first line of questioning… actually that's not true, I first check if the candidate needs the bathroom and/or a drink, because comfort is important, but once I'm past the bit about the candidate's fluid in/out-take, I set about determining if the candidate knows JavaScript, or just jQuery.
+Kyle Simpson is a thorough pragmatist.
 
-Not that there's anything wrong with jQuery. It lets you do a lot without really knowing JavaScript, and that's a feature not a bug. But if the job calls for advanced skills in JavaScript performance and maintainability, you need someone who knows how libraries such as jQuery are put together. You need to be able to harness the core of JavaScript the same way they do.
+I can't think of higher praise than this. To me, these are two of the most important qualities that a software developer must have. That's right: *must*, not *should*. Kyle's keen ability to tease apart layers of the JavaScript programming language and present them in understandable and meaningful portions is second to none.
 
-If I want to get a picture of someone's core JavaScript skill, I'm most interested in what they make of closures (you've read that book of this series already, right?) and how to get the most out of asynchronicity, which brings us to this book.
+*ES6 & Beyond* will be familiar to readers of the *You Don't Know JS* series:  they can expect to be deeply immersed in everything from the obvious, to the very subtle -- revealing semantics that were either taken for granted or never even considered. Until now, the *You Don't Know JS* book series has covered material that has at least some degree of familiarity to its readers. They have either seen or heard about the subject matter; they may even have experience with it. This volume covers material that only a very small portion of the JavaScript developer community has been exposed to: the  evolutionary changes to the language introduced in the ECMAScript 2015 Language Specification.
 
-For starters, you'll be taken through callbacks, the bread and butter of asynchronous programming. Of course, bread and butter does not make for a particularly satisfying meal, but the next course is full of tasty tasty promises!
+Over the last couple years, I've witnessed Kyle's tireless efforts to familiarize himself with this material to a level of expertise that is rivaled by only a handful of his professional peers. That's quite a feat, considering that at the time of this writing, the language specification document hasn't been formally published! But what I've said is true, and I've read every word that Kyle's written for this book. I've followed every change, and each time, the content only gets better and provides yet a deeper level of understanding.
 
-If you don't know promises, now is the time to learn. Promises are now the official way to provide async return values in both JavaScript and the DOM. All future async DOM APIs will use them, many already do, so be prepared! At the time of writing, Promises have shipped in most major browsers, with IE shipping soon. Once you've finished that, I hope you left room for the next course, Generators.
+This book is about shaking up your sense of understanding by exposing you to the new and unknown. The intention is to evolve your knowledge in step with your tools by bestowing you with new capabilities. It exists to give you the confidence to fully embrace the next major era of JavaScript programming.
 
-Generators snuck their way into stable versions of Chrome and Firefox without too much pomp and ceremony, because, frankly, they're more complicated than they are interesting. Or, that's what I thought until I saw them combined with promises. There, they become an important tool in readability and maintenance.
-
-For dessert, well, I won't spoil the surprise, but prepare to gaze into the future of JavaScript! Features that give you more and more control over concurrency and asynchronicity.
-
-Well, I won't block your enjoyment of the book any longer, on with the show! If you've already read part of the book before reading this Foreword, give yourself 10 asynchronous points! You deserve them!
-
-Jake Archibald<br>
-[jakearchibald.com](http://jakearchibald.com), [@jaffathecake](http://twitter.com/jaffathecake)<br>
-Developer Advocate at Google Chrome
+Rick Waldron<br>
+[@rwaldron](http://twitter.com/rwaldron)<br>
+Open Web Engineer at Bocoup<br>
+Ecma/TC39 Representative for jQuery

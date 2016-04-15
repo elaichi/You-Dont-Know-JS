@@ -1,619 +1,799 @@
-# You Don't Know JS: Async & Performance
-# Chapter 6: Benchmarking & Tuning
+# You Don't Know JS: ES6 & Beyond
+# Chapter 6: API Additions
 
-As the first four chapters of this book were all about performance as a coding pattern (asynchrony and concurrency), and Chapter 5 was about performance at the macro program architecture level, this chapter goes after the topic of performance at the micro level, focusing on single expressions/statements.
+From conversions of values to mathematic calculations, ES6 adds many static properties and methods to various built-in natives and objects to help with common tasks. In addition, instances of some of the natives have new capabilities via various new prototype methods.
 
-One of the most common areas of curiosity -- indeed, some developers can get quite obsessed about it -- is in analyzing and testing various options for how to write a line or chunk of code, and which one is faster.
+**Note:** Most of these features can be faithfully polyfilled. We will not dive into such details here, but check out "ES6 Shim" (https://github.com/paulmillr/es6-shim/) for standards-compliant shims/polyfills.
 
-We're going to look at some of these issues, but it's important to understand from the outset that this chapter is **not** about feeding the obsession of micro-performance tuning, like whether some given JS engine can run `++a` faster than `a++`. The more important goal of this chapter is to figure out what kinds of JS performance matter and which ones don't, *and how to tell the difference*.
+## `Array`
 
-But even before we get there, we need to explore how to most accurately and reliably test JS performance, because there's tons of misconceptions and myths that have flooded our collective cult knowledge base. We've got to sift through all that junk to find some clarity.
+One of the most commonly extended features in JS by various user libraries is the Array type. It should be no surprise that ES6 adds a number of helpers to Array, both static and prototype (instance).
 
-## Benchmarking
+### `Array.of(..)` Static Function
 
-OK, time to start dispelling some misconceptions. I'd wager the vast majority of JS developers, if asked to benchmark the speed (execution time) of a certain operation, would initially go about it something like this:
+There's a well known gotcha with the `Array(..)` constructor, which is that if there's only one argument passed, and that argument is a number, instead of making an array of one element with that number value in it, it constructs an empty array with a `length` property equal to the number. This action produces the unfortunate and quirky "empty slots" behavior that's reviled about JS arrays.
+
+`Array.of(..)` replaces `Array(..)` as the preferred function-form constructor for arrays, because `Array.of(..)` does not have that special single-number-argument case. Consider:
 
 ```js
-var start = (new Date()).getTime();	// or `Date.now()`
+var a = Array( 3 );
+a.length;						// 3
+a[0];							// undefined
 
-// do some operation
+var b = Array.of( 3 );
+b.length;						// 1
+b[0];							// 3
 
-var end = (new Date()).getTime();
-
-console.log( "Duration:", (end - start) );
+var c = Array.of( 1, 2, 3 );
+c.length;						// 3
+c;								// [1,2,3]
 ```
 
-Raise your hand if that's roughly what came to your mind. Yep, I thought so. There's a lot wrong with this approach, but don't feel bad; **we've all been there.**
+Under what circumstances would you want to use `Array.of(..)` instead of just creating an array with literal syntax, like `c = [1,2,3]`? There's two possible cases.
 
-What did that measurement tell you, exactly? Understanding what it does and doesn't say about the execution time of the operation in question is key to learning how to appropriately benchmark performance in JavaScript.
+If you have a callback that's supposed to wrap argument(s) passed to it in an array, `Array.of(..)` fits the bill perfectly. That's probably not terribly common, but it may scratch an itch for you.
 
-If the duration reported is `0`, you may be tempted to believe that it took less than a millisecond. But that's not very accurate. Some platforms don't have single millisecond precision, but instead only update the timer in larger increments. For example, older versions of windows (and thus IE) had only 15ms precision, which means the operation has to take at least that long for anything other than `0` to be reported!
-
-Moreover, whatever duration is reported, the only thing you really know is that the operation took approximately that long on that exact single run. You have near-zero confidence that it will always run at that speed. You have no idea if the engine or system had some sort of interference at that exact moment, and that at other times the operation could run faster.
-
-What if the duration reported is `4`? Are you more sure it took about four milliseconds? Nope. It might have taken less time, and there may have been some other delay in getting either `start` or `end` timestamps.
-
-More troublingly, you also don't know that the circumstances of this operation test aren't overly optimistic. It's possible that the JS engine figured out a way to optimize your isolated test case, but in a more real program such optimization would be diluted or impossible, such that the operation would run slower than your test.
-
-So... what do we know? Unfortunately, with those realizations stated, **we know very little.** Something of such low confidence isn't even remotely good enough to build your determinations on. Your "benchmark" is basically useless. And worse, it's dangerous in that it implies false confidence, not just to you but also to others who don't think critically about the conditions that led to those results.
-
-### Repetition
-
-"OK," you now say, "Just put a loop around it so the whole test takes longer." If you repeat an operation 100 times, and that whole loop reportedly takes a total of 137ms, then you can just divide by 100 and get an average duration of 1.37ms for each operation, right?
-
-Well, not exactly.
-
-A straight mathematical average by itself is definitely not sufficient for making judgments about performance which you plan to extrapolate to the breadth of your entire application. With a hundred iterations, even a couple of outliers (high or low) can skew the average, and then when you apply that conclusion repeatedly, you even further inflate the skew beyond credulity.
-
-Instead of just running for a fixed number of iterations, you can instead choose to run the loop of tests until a certain amount of time has passed. That might be more reliable, but how do you decide how long to run? You might guess that it should be some multiple of how long your operation should take to run once. Wrong.
-
-Actually, the length of time to repeat across should be based on the accuracy of the timer you're using, specifically to minimize the chances of inaccuracy. The less precise your timer, the longer you need to run to make sure you've minimized the error percentage. A 15ms timer is pretty bad for accurate benchmarking; to minimize its uncertainty (aka "error rate") to less than 1%, you need to run your each cycle of test iterations for 750ms. A 1ms timer only needs a cycle to run for 50ms to get the same confidence.
-
-But then, that's just a single sample. To be sure you're factoring out the skew, you'll want lots of samples to average across. You'll also want to understand something about just how slow the worst sample is, how fast the best sample is, how far apart those best and worse cases were, and so on. You'll want to know not just a number that tells you how fast something ran, but also to have some quantifiable measure of how trustable that number is.
-
-Also, you probably want to combine these different techniques (as well as others), so that you get the best balance of all the possible approaches.
-
-That's all bare minimum just to get started. If you've been approaching performance benchmarking with anything less serious than what I just glossed over, well... "you don't know: proper benchmarking."
-
-### Benchmark.js
-
-Any relevant and reliable benchmark should be based on statistically sound practices. I am not going to write a chapter on statistics here, so I'll hand wave around some terms: standard deviation, variance, margin of error. If you don't know what those terms really mean -- I took a stats class back in college and I'm still a little fuzzy on them -- you are not actually qualified to write your own benchmarking logic.
-
-Luckily, smart folks like John-David Dalton and Mathias Bynens do understand these concepts, and wrote a statistically sound benchmarking tool called Benchmark.js (http://benchmarkjs.com/). So I can end the suspense by simply saying: "just use that tool."
-
-I won't repeat their whole documentation for how Benchmark.js works; they have fantastic API Docs (http://benchmarkjs.com/docs) you should read. Also there are some great (http://calendar.perfplanet.com/2010/bulletproof-javascript-benchmarks/) writeups (http://monsur.hossa.in/2012/12/11/benchmarkjs.html) on more of the details and methodology.
-
-But just for quick illustration purposes, here's how you could use Benchmark.js to run a quick performance test:
+The other scenario is if you subclass `Array` (see "Classes" in Chapter 3) and want to be able to create and initialize elements in an instance of your subclass, such as:
 
 ```js
-function foo() {
-	// operation(s) to test
+class MyCoolArray extends Array {
+	sum() {
+		return this.reduce( function reducer(acc,curr){
+			return acc + curr;
+		}, 0 );
+	}
 }
 
-var bench = new Benchmark(
-	"foo test",				// test name
-	foo,					// function to test (just contents)
-	{
-		// ..				// optional extra options (see docs)
-	}
-);
+var x = new MyCoolArray( 3 );
+x.length;						// 3 -- oops!
+x.sum();						// 0 -- oops!
 
-bench.hz;					// number of operations per second
-bench.stats.moe;			// margin of error
-bench.stats.variance;		// variance across samples
-// ..
+var y = [3];					// Array, not MyCoolArray
+y.length;						// 1
+y.sum();						// `sum` is not a function
+
+var z = MyCoolArray.of( 3 );
+z.length;						// 1
+z.sum();						// 3
 ```
 
-There's *lots* more to learn about using Benchmark.js besides this glance I'm including here. But the point is that it's handling all of the complexities of setting up a fair, reliable, and valid performance benchmark for a given piece of JavaScript code. If you're going to try to test and benchmark your code, this library is the first place you should turn.
+You can't just (easily) create a constructor for `MyCoolArray` that overrides the behavior of the `Array` parent constructor, because that constructor is necessary to actually create a well-behaving array value (initializing the `this`). The "inherited" static `of(..)` method on the `MyCoolArray` subclass provides a nice solution.
 
-We're showing here the usage to test a single operation like X, but it's fairly common that you want to compare X to Y. This is easy to do by simply setting up two different tests in a "Suite" (a Benchmark.js organizational feature). Then, you run them head-to-head, and compare the statistics to conclude whether X or Y was faster.
+### `Array.from(..)` Static Function
 
-Benchmark.js can of course be used to test JavaScript in a browser (see the "jsPerf.com" section later in this chapter), but it can also run in non-browser environments (Node.js, etc.).
+An "array-like object" in JavaScript is an object that has a `length` property on it, specifically with an integer value of zero or higher.
 
-One largely untapped potential use-case for Benchmark.js is to use it in your Dev or QA environments to run automated performance regression tests against critical path parts of your application's JavaScript. Similar to how you might run unit test suites before deployment, you can also compare the performance against previous benchmarks to monitor if you are improving or degrading application performance.
-
-#### Setup/Teardown
-
-In the previous code snippet, we glossed over the "extra options" `{ .. }` object. But there are two options we should discuss: `setup` and `teardown`.
-
-These two options let you define functions to be called before and after your test case runs.
-
-It's incredibly important to understand that your `setup` and `teardown` code **does not run for each test iteration**. The best way to think about it is that there's an outer loop (repeating cycles), and an inner loop (repeating test iterations). `setup` and `teardown` are run at the beginning and end of each *outer* loop (aka cycle) iteration, but not inside the inner loop.
-
-Why does this matter? Let's imagine you have a test case that looks like this:
+These values have been notoriously frustrating to work with in JS; it's been quite common to need to transform them into an actual array, so that the various `Array.prototype` methods (`map(..)`, `indexOf(..)` etc.) are available to use with it. That process usually looks like:
 
 ```js
-a = a + "w";
-b = a.charAt( 1 );
+// array-like object
+var arrLike = {
+	length: 3,
+	0: "foo",
+	1: "bar"
+};
+
+var arr = Array.prototype.slice.call( arrLike );
 ```
 
-Then, you set up your test `setup` as follows:
+Another common task where `slice(..)` is often used is in duplicating a real array:
 
 ```js
-var a = "x";
+var arr2 = arr.slice();
 ```
 
-Your temptation is probably to believe that `a` is starting out as `"x"` for each test iteration.
-
-But it's not! It's starting `a` at `"x"` for each test cycle, and then your repeated `+ "w"` concatenations will be making a larger and larger `a` value, even though you're only ever accessing the character `"w"` at the `1` position.
-
-Where this most commonly bites you is when you make side effect changes to something like the DOM, like appending a child element. You may think your parent element is set as empty each time, but it's actually getting lots of elements added, and that can significantly sway the results of your tests.
-
-## Context Is King
-
-Don't forget to check the context of a particular performance benchmark, especially a comparison between X and Y tasks. Just because your test reveals that X is faster than Y doesn't mean that the conclusion "X is faster than Y" is actually relevant.
-
-For example, let's say a performance test reveals that X runs 10,000,000 operations per second, and Y runs at 8,000,000 operations per second. You could claim that Y is 20% slower than X, and you'd be mathematically correct, but your assertion doesn't hold as much water as you'd think.
-
-Let's think about the results more critically: 10,000,000 operations per second is 10,000 operations per millisecond, and 10 operations per microsecond. In other words, a single operation takes 0.1 microseconds, or 100 nanoseconds. It's hard to fathom just how small 100ns is, but for comparison, it's often cited that the human eye isn't generally capable of distinguishing anything less than 100ms, which is one million times slower than the 100ns speed of the X operation.
-
-Even recent scientific studies showing that maybe the brain can process as quick as 13ms (about 8x faster than previously asserted) would mean that X is still running 125,000 times faster than the human brain can perceive a distinct thing happening. **X is going really, really fast.**
-
-But more importantly, let's talk about the difference between X and Y, the 2,000,000 operations per second difference. If X takes 100ns, and Y takes 80ns, the difference is 20ns, which in the best case is still one 650-thousandth of the interval the human brain can perceive.
-
-What's my point? **None of this performance difference matters, at all!**
-
-But wait, what if this operation is going to happen a whole bunch of times in a row? Then the difference could add up, right?
-
-OK, so what we're asking then is, how likely is it that operation X is going to be run over and over again, one right after the other, and that this has to happen 650,000 times just to get a sliver of a hope the human brain could perceive it. More likely, it'd have to happen 5,000,000 to 10,000,000 times together in a tight loop to even approach relevance.
-
-While the computer scientist in you might protest that this is possible, the louder voice of realism in you should sanity check just how likely or unlikely that really is. Even if it is relevant in rare occasions, it's irrelevant in most situations.
-
-The vast majority of your benchmark results on tiny operations -- like the `++x` vs `x++` myth -- **are just totally bogus** for supporting the conclusion that X should be favored over Y on a performance basis.
-
-### Engine Optimizations
-
-You simply cannot reliably extrapolate that if X was 10 microseconds faster than Y in your isolated test, that means X is always faster than Y and should always be used. That's not how performance works. It's vastly more complicated.
-
-For example, let's imagine (purely hypothetical) that you test some microperformance behavior such as comparing:
+In both cases, the new ES6 `Array.from(..)` method can be a more understandable and graceful -- if also less verbose -- approach:
 
 ```js
-var twelve = "12";
-var foo = "foo";
+var arr = Array.from( arrLike );
 
-// test 1
-var X1 = parseInt( twelve );
-var X2 = parseInt( foo );
-
-// test 2
-var Y1 = Number( twelve );
-var Y2 = Number( foo );
+var arrCopy = Array.from( arr );
 ```
 
-If you understand what `parseInt(..)` does compared to `Number(..)`, you might intuit that `parseInt(..)` potentially has "more work" to do, especially in the `foo` case. Or you might intuit that they should have the same amount of work to do in the `foo` case, as both should be able to stop at the first character `"f"`.
+`Array.from(..)` looks to see if the first argument is an iterable (see "Iterators" in Chapter 3), and if so, it uses the iterator to produce values to "copy" into the returned array. Because real arrays have an iterator for those values, that iterator is automatically used.
 
-Which intuition is correct? I honestly don't know. But I'll make the case it doesn't matter what your intuition is. What might the results be when you test it? Again, I'm making up a pure hypothetical here, I haven't actually tried, nor do I care.
-
-Let's pretend the test comes back that `X` and `Y` are statistically identical. Have you then confirmed your intuition about the `"f"` character thing? Nope.
-
-It's possible in our hypothetical that the engine might recognize that the variables `twelve` and `foo` are only being used in one place in each test, and so it might decide to inline those values. Then it may realize that `Number( "12" )` can just be replaced by `12`. And maybe it comes to the same conclusion with `parseInt(..)`, or maybe not.
-
-Or an engine's dead-code removal heuristic could kick in, and it could realize that variables `X` and `Y` aren't being used, so declaring them is irrelevant, so it doesn't end up doing anything at all in either test.
-
-And all that's just made with the mindset of assumptions about a single test run. Modern engines are fantastically more complicated than what we're intuiting here. They do all sorts of tricks, like tracing and tracking how a piece of code behaves over a short period of time, or with a particularly constrained set of inputs.
-
-What if the engine optimizes a certain way because of the fixed input, but in your real program you give more varied input and the optimization decisions shake out differently (or not at all!)? Or what if the engine kicks in optimizations because it sees the code being run tens of thousands of times by the benchmarking utility, but in your real program it will only run a hundred times in near proximity, and under those conditions the engine determines the optimizations are not worth it?
-
-And all those optimizations we just hypothesized about might happen in our constrained test but maybe the engine wouldn't do them in a more complex program (for various reasons). Or it could be reversed -- the engine might not optimize such trivial code but may be more inclined to optimize it more aggressively when the system is already more taxed by a more sophisticated program.
-
-The point I'm trying to make is that you really don't know for sure exactly what's going on under the covers. All the guesses and hypothesis you can muster don't amount to hardly anything concrete for really making such decisions.
-
-Does that mean you can't really do any useful testing? **Definitely not!**
-
-What this boils down to is that testing *not real* code gives you *not real* results. In so much as is possible and practical, you should test actual real, non-trivial snippets of your code, and under as best of real conditions as you can actually hope to. Only then will the results you get have a chance to approximate reality.
-
-Microbenchmarks like `++x` vs `x++` are so incredibly likely to be bogus, we might as well just flatly assume them as such.
-
-## jsPerf.com
-
-While Benchmark.js is useful for testing the performance of your code in whatever JS environment you're running, it cannot be stressed enough that you need to compile test results from lots of different environments (desktop browsers, mobile devices, etc.) if you want to have any hope of reliable test conclusions.
-
-For example, Chrome on a high-end desktop machine is not likely to perform anywhere near the same as Chrome mobile on a smartphone. And a smartphone with a full battery charge is not likely to perform anywhere near the same as a smartphone with 2% battery life left, when the device is starting to power down the radio and processor.
-
-If you want to make assertions like "X is faster than Y" in any reasonable sense across more than just a single environment, you're going to need to actually test as many of those real world environments as possible. Just because Chrome executes some X operation faster than Y doesn't mean that all browsers do. And of course you also probably will want to cross-reference the results of multiple browser test runs with the demographics of your users.
-
-There's an awesome website for this purpose called jsPerf (http://jsperf.com). It uses the Benchmark.js library we talked about earlier to run statistically accurate and reliable tests, and makes the test on an openly available URL that you can pass around to others.
-
-Each time a test is run, the results are collected and persisted with the test, and the cumulative test results are graphed on the page for anyone to see.
-
-When creating a test on the site, you start out with two test cases to fill in, but you can add as many as you need. You also have the ability to set up `setup` code that is run at the beginning of each test cycle and `teardown` code run at the end of each cycle.
-
-**Note:** A trick for doing just one test case (if you're benchmarking a single approach instead of a head-to-head) is to fill in the second test input boxes with placeholder text on first creation, then edit the test and leave the second test blank, which will delete it. You can always add more test cases later.
-
-You can define the initial page setup (importing libraries, defining utility helper functions, declaring variables, etc.). There are also options for defining setup and teardown behavior if needed -- consult the "Setup/Teardown" section in the Benchmark.js discussion earlier.
-
-### Sanity Check
-
-jsPerf is a fantastic resource, but there's an awful lot of tests published that when you analyze them are quite flawed or bogus, for any of a variety of reasons as outlined so far in this chapter.
+But if you pass an array-like object as the first argument to `Array.from(..)`, it behaves basically the same as `slice()` (no arguments!) or `apply(..)` does, which is that it simply loops over the value, accessing numerically named properties from `0` up to whatever the value of `length` is.
 
 Consider:
 
 ```js
-// Case 1
-var x = [];
-for (var i=0; i<10; i++) {
-	x[i] = "x";
-}
+var arrLike = {
+	length: 4,
+	2: "foo"
+};
 
-// Case 2
-var x = [];
-for (var i=0; i<10; i++) {
-	x[x.length] = "x";
-}
-
-// Case 3
-var x = [];
-for (var i=0; i<10; i++) {
-	x.push( "x" );
-}
+Array.from( arrLike );
+// [ undefined, undefined, "foo", undefined ]
 ```
 
-Some observations to ponder about this test scenario:
+Because positions `0`, `1`, and `3` didn't exist on `arrLike`, the result was the `undefined` value for each of those slots.
 
-* It's extremely common for devs to put their own loops into test cases, and they forget that Benchmark.js already does all the repetition you need. There's a really strong chance that the `for` loops in these cases are totally unnecessary noise.
-* The declaring and initializing of `x` is included in each test case, possibly unnecessarily. Recall from earlier that if `x = []` were in the `setup` code, it wouldn't actually be run before each test iteration, but instead once at the beginning of each cycle. That means `x` would continue growing quite large, not just the size `10` implied by the `for` loops.
-
-   So is the intent to make sure the tests are constrained only to how the JS engine behaves with very small arrays (size `10`)? That *could* be the intent, but if it is, you have to consider if that's not focusing far too much on nuanced internal implementation details.
-
-   On the other hand, does the intent of the test embrace the context that the arrays will actually be growing quite large? Is the JS engines' behavior with larger arrays relevant and accurate when compared with the intended real world usage?
-
-* Is the intent to find out how much `x.length` or `x.push(..)` add to the performance of the operation to append to the `x` array? OK, that might be a valid thing to test. But then again, `push(..)` is a function call, so of course it's going to be slower than `[..]` access. Arguably, cases 1 and 2 are fairer than case 3.
-
-
-Here's another example that illustrates a common apples-to-oranges flaw:
+You could produce a similar outcome like this:
 
 ```js
-// Case 1
-var x = ["John","Albert","Sue","Frank","Bob"];
-x.sort();
+var emptySlotsArr = [];
+emptySlotsArr.length = 4;
+emptySlotsArr[2] = "foo";
 
-// Case 2
-var x = ["John","Albert","Sue","Frank","Bob"];
-x.sort( function mySort(a,b){
-	if (a < b) return -1;
-	if (a > b) return 1;
-	return 0;
-} );
+Array.from( emptySlotsArr );
+// [ undefined, undefined, "foo", undefined ]
 ```
 
-Here, the obvious intent is to find out how much slower the custom `mySort(..)` comparator is than the built-in default comparator. But by specifying the function `mySort(..)` as inline function expression, you've created an unfair/bogus test. Here, the second case is not only testing a custom user JS function, **but it's also testing creating a new function expression for each iteration.**
+#### Avoiding Empty Slots
 
-Would it surprise you to find out that if you run a similar test but update it to isolate only for creating an inline function expression versus using a pre-declared function, the inline function expression creation can be from 2% to 20% slower!?
+There's a subtle but important difference in the previous snippet between the `emptySlotsArr` and the result of the `Array.from(..)` call. `Array.from(..)` never produces empty slots.
 
-Unless your intent with this test *is* to consider the inline function expression creation "cost," a better/fairer test would put `mySort(..)`'s declaration in the page setup -- don't put it in the test `setup` as that's unnecessary redeclaration for each cycle -- and simply reference it by name in the test case: `x.sort(mySort)`.
-
-Building on the previous example, another pitfall is in opaquely avoiding or adding "extra work" to one test case that creates an apples-to-oranges scenario:
+Prior to ES6, if you wanted to produce an array initialized to a certain length with actual `undefined` values in each slot (no empty slots!), you had to do extra work:
 
 ```js
-// Case 1
-var x = [12,-14,0,3,18,0,2.9];
-x.sort();
+var a = Array( 4 );								// four empty slots!
 
-// Case 2
-var x = [12,-14,0,3,18,0,2.9];
-x.sort( function mySort(a,b){
-	return a - b;
-} );
+var b = Array.apply( null, { length: 4 } );		// four `undefined` values
 ```
 
-Setting aside the previously mentioned inline function expression pitfall, the second case's `mySort(..)` works in this case because you have provided it numbers, but would have of course failed with strings. The first case doesn't throw an error, but it actually behaves differently and has a different outcome! It should be obvious, but: **a different outcome between two test cases almost certainly invalidates the entire test!**
-
-But beyond the different outcomes, in this case, the built in `sort(..)`'s comparator is actually doing "extra work" that `mySort()` does not, in that the built-in one coerces the compared values to strings and does lexicographic comparison. The first snippet results in `[-14, 0, 0, 12, 18, 2.9, 3]` while the second snippet results (likely more accurately based on intent) in `[-14, 0, 0, 2.9, 3, 12, 18]`.
-
-So that test is unfair because it's not actually doing the same task between the cases. Any results you get are bogus.
-
-These same pitfalls can even be much more subtle:
+But `Array.from(..)` now makes this easier:
 
 ```js
-// Case 1
-var x = false;
-var y = x ? 1 : 2;
-
-// Case 2
-var x;
-var y = x ? 1 : 2;
+var c = Array.from( { length: 4 } );			// four `undefined` values
 ```
 
-Here, the intent might be to test the performance impact of the coercion to a Boolean that the `? :` operator will do if the `x` expression is not already a Boolean (see the *Types & Grammar* title of this book series). So, you're apparently OK with the fact that there is extra work to do the coercion in the second case.
+**Warning:** Using an empty slot array like `a` in the previous snippets would work with some array functions, but others ignore empty slots (like `map(..)`, etc.). You should never intentionally work with empty slots, as it will almost certainly lead to strange/unpredictable behavior in your programs.
 
-The subtle problem? You're setting `x`'s value in the first case and not setting it in the other, so you're actually doing work in the first case that you're not doing in the second. To eliminate any potential (albeit minor) skew, try:
+#### Mapping
 
-```js
-// Case 1
-var x = false;
-var y = x ? 1 : 2;
-
-// Case 2
-var x = undefined;
-var y = x ? 1 : 2;
-```
-
-Now there's an assignment in both cases, so the thing you want to test -- the coercion of `x` or not -- has likely been more accurately isolated and tested.
-
-## Writing Good Tests
-
-Let me see if I can articulate the bigger point I'm trying to make here.
-
-Good test authoring requires careful analytical thinking about what differences exist between two test cases and whether the differences between them are *intentional* or *unintentional*.
-
-Intentional differences are of course normal and OK, but it's too easy to create unintentional differences that skew your results. You have to be really, really careful to avoid that skew. Moreover, you may intend a difference but it may not be obvious to other readers of your test what your intent was, so they may doubt (or trust!) your test incorrectly. How do you fix that?
-
-**Write better, clearer tests.** But also, take the time to document (using the jsPerf.com "Description" field and/or code comments) exactly what the intent of your test is, even to the nuanced detail. Call out the intentional differences, which will help others and your future self to better identify unintentional differences that could be skewing the test results.
-
-Isolate things which aren't relevant to your test by pre-declaring them in the page or test setup settings so they're outside the timed parts of the test.
-
-Instead of trying to narrow in on a tiny snippet of your real code and benchmarking just that piece out of context, tests and benchmarks are better when they include a larger (while still relevant) context. Those tests also tend to run slower, which means any differences you spot are more relevant in context.
-
-## Microperformance
-
-OK, until now we've been dancing around various microperformance issues and generally looking disfavorably upon obsessing about them. I want to take just a moment to address them directly.
-
-The first thing you need to get more comfortable with when thinking about performance benchmarking your code is that the code you write is not always the code the engine actually runs. We briefly looked at that topic back in Chapter 1 when we discussed statement reordering by the compiler, but here we're going to suggest the compiler can sometimes decide to run different code than you wrote, not just in different orders but different in substance.
-
-Let's consider this piece of code:
+The `Array.from(..)` utility has another helpful trick up its sleeve. The second argument, if provided, is a mapping callback (almost the same as the regular `Array#map(..)` expects) which is called to map/transform each value from the source to the returned target. Consider:
 
 ```js
-var foo = 41;
+var arrLike = {
+	length: 4,
+	2: "foo"
+};
 
-(function(){
-	(function(){
-		(function(baz){
-			var bar = foo + baz;
-			// ..
-		})(1);
-	})();
-})();
-```
-
-You may think about the `foo` reference in the innermost function as needing to do a three-level scope lookup. We covered in the *Scope & Closures* title of this book series how lexical scope works, and the fact that the compiler generally caches such lookups so that referencing `foo` from different scopes doesn't really practically "cost" anything extra.
-
-But there's something deeper to consider. What if the compiler realizes that `foo` isn't referenced anywhere else but that one location, and it further notices that the value never is anything except the `41` as shown?
-
-Isn't it quite possible and acceptable that the JS compiler could decide to just remove the `foo` variable entirely, and *inline* the value, such as this:
-
-```js
-(function(){
-	(function(){
-		(function(baz){
-			var bar = 41 + baz;
-			// ..
-		})(1);
-	})();
-})();
-```
-
-**Note:** Of course, the compiler could probably also do a similar analysis and rewrite with the `baz` variable here, too.
-
-When you begin to think about your JS code as being a hint or suggestion to the engine of what to do, rather than a literal requirement, you realize that a lot of the obsession over discrete syntactic minutia is most likely unfounded.
-
-Another example:
-
-```js
-function factorial(n) {
-	if (n < 2) return 1;
-	return n * factorial( n - 1 );
-}
-
-factorial( 5 );		// 120
-```
-
-Ah, the good ol' fashioned "factorial" algorithm! You might assume that the JS engine will run that code mostly as is. And to be honest, it might -- I'm not really sure.
-
-But as an anecdote, the same code expressed in C and compiled with advanced optimizations would result in the compiler realizing that the call `factorial(5)` can just be replaced with the constant value `120`, eliminating the function and call entirely!
-
-Moreover, some engines have a practice called "unrolling recursion," where it can realize that the recursion you've expressed can actually be done "easier" (i.e., more optimally) with a loop. It's possible the preceding code could be *rewritten* by a JS engine to run as:
-
-```js
-function factorial(n) {
-	if (n < 2) return 1;
-
-	var res = 1;
-	for (var i=n; i>1; i--) {
-		res *= i;
+Array.from( arrLike, function mapper(val,idx){
+	if (typeof val == "string") {
+		return val.toUpperCase();
 	}
-	return res;
-}
-
-factorial( 5 );		// 120
-```
-
-Now, let's imagine that in the earlier snippet you had been worried about whether `n * factorial(n-1)` or `n *= factorial(--n)` runs faster. Maybe you even did a performance benchmark to try to figure out which was better. But you miss the fact that in the bigger context, the engine may not run either line of code because it may unroll the recursion!
-
-Speaking of `--`, `--n` versus `n--` is often cited as one of those places where you can optimize by choosing the `--n` version, because theoretically it requires less effort down at the assembly level of processing.
-
-That sort of obsession is basically nonsense in modern JavaScript. That's the kind of thing you should be letting the engine take care of. You should write the code that makes the most sense. Compare these three `for` loops:
-
-```js
-// Option 1
-for (var i=0; i<10; i++) {
-	console.log( i );
-}
-
-// Option 2
-for (var i=0; i<10; ++i) {
-	console.log( i );
-}
-
-// Option 3
-for (var i=-1; ++i<10; ) {
-	console.log( i );
-}
-```
-
-Even if you have some theory where the second or third option is more performant than the first option by a tiny bit, which is dubious at best, the third loop is more confusing because you have to start with `-1` for `i` to account for the fact that `++i` pre-increment is used. And the difference between the first and second options is really quite irrelevant.
-
-It's entirely possible that a JS engine may see a place where `i++` is used and realize that it can safely replace it with the `++i` equivalent, which means your time spent deciding which one to pick was completely wasted and the outcome moot.
-
-Here's another common example of silly microperformance obsession:
-
-```js
-var x = [ .. ];
-
-// Option 1
-for (var i=0; i < x.length; i++) {
-	// ..
-}
-
-// Option 2
-for (var i=0, len = x.length; i < len; i++) {
-	// ..
-}
-```
-
-The theory here goes that you should cache the length of the `x` array in the variable `len`, because ostensibly it doesn't change, to avoid paying the price of `x.length` being consulted for each iteration of the loop.
-
-If you run performance benchmarks around `x.length` usage compared to caching it in a `len` variable, you'll find that while the theory sounds nice, in practice any measured differences are statistically completely irrelevant.
-
-In fact, in some engines like v8, it can be shown (http://mrale.ph/blog/2014/12/24/array-length-caching.html) that you could make things slightly worse by pre-caching the length instead of letting the engine figure it out for you. Don't try to outsmart your JavaScript engine, you'll probably lose when it comes to performance optimizations.
-
-### Not All Engines Are Alike
-
-The different JS engines in various browsers can all be "spec compliant" while having radically different ways of handling code. The JS specification doesn't require anything performance related -- well, except ES6's "Tail Call Optimization" covered later in this chapter.
-
-The engines are free to decide that one operation will receive its attention to optimize, perhaps trading off for lesser performance on another operation. It can be very tenuous to find an approach for an operation that always runs faster in all browsers.
-
-There's a movement among some in the JS dev community, especially those who work with Node.js, to analyze the specific internal implementation details of the v8 JavaScript engine and make decisions about writing JS code that is tailored to take best advantage of how v8 works. You can actually achieve a surprisingly high degree of performance optimization with such endeavors, so the payoff for the effort can be quite high.
-
-Some commonly cited examples (https://github.com/petkaantonov/bluebird/wiki/Optimization-killers) for v8:
-
-* Don't pass the `arguments` variable from one function to any other function, as such "leakage" slows down the function implementation.
-* Isolate a `try..catch` in its own function. Browsers struggle with optimizing any function with a `try..catch` in it, so moving that construct to its own function means you contain the de-optimization harm while letting the surrounding code be optimizable.
-
-But rather than focus on those tips specifically, let's sanity check the v8-only optimization approach in a general sense.
-
-Are you genuinely writing code that only needs to run in one JS engine? Even if your code is entirely intended for Node.js *right now*, is the assumption that v8 will *always* be the used JS engine reliable? Is it possible that someday a few years from now, there's another server-side JS platform besides Node.js that you choose to run your code on? What if what you optimized for before is now a much slower way of doing that operation on the new engine?
-
-Or what if your code always stays running on v8 from here on out, but v8 decides at some point to change the way some set of operations works such that what used to be fast is now slow, and vice versa?
-
-These scenarios aren't just theoretical, either. It used to be that it was faster to put multiple string values into an array and then call `join("")` on the array to concatenate the values than to just use `+` concatenation directly with the values. The historical reason for this is nuanced, but it has to do with internal implementation details about how string values were stored and managed in memory.
-
-As a result, "best practice" advice at the time disseminated across the industry suggesting developers always use the array `join(..)` approach. And many followed.
-
-Except, somewhere along the way, the JS engines changed approaches for internally managing strings, and specifically put in optimizations for `+` concatenation. They didn't slow down `join(..)` per se, but they put more effort into helping `+` usage, as it was still quite a bit more widespread.
-
-**Note:** The practice of standardizing or optimizing some particular approach based mostly on its existing widespread usage is often called (metaphorically) "paving the cowpath."
-
-Once that new approach to handling strings and concatenation took hold, unfortunately all the code out in the wild that was using array `join(..)` to concatenate strings was then sub-optimal.
-
-Another example: at one time, the Opera browser differed from other browsers in how it handled the boxing/unboxing of primitive wrapper objects (see the *Types & Grammar* title of this book series). As such, their advice to developers was to use a `String` object instead of the primitive `string` value if properties like `length` or methods like `charAt(..)` needed to be accessed. This advice may have been correct for Opera at the time, but it was literally completely opposite for other major contemporary browsers, as they had optimizations specifically for the `string` primitives and not their object wrapper counterparts.
-
-I think these various gotchas are at least possible, if not likely, for code even today. So I'm very cautious about making wide ranging performance optimizations in my JS code based purely on engine implementation details, **especially if those details are only true of a single engine**.
-
-The reverse is also something to be wary of: you shouldn't necessarily change a piece of code to work around one engine's difficulty with running a piece of code in an acceptably performant way.
-
-Historically, IE has been the brunt of many such frustrations, given that there have been plenty of scenarios in older IE versions where it struggled with some performance aspect that other major browsers of the time seemed not to have much trouble with. The string concatenation discussion we just had was actually a real concern back in the IE6 and IE7 days, where it was possible to get better performance out of `join(..)` than `+`.
-
-But it's troublesome to suggest that just one browser's trouble with performance is justification for using a code approach that quite possibly could be sub-optimal in all other browsers. Even if the browser in question has a large market share for your site's audience, it may be more practical to write the proper code and rely on the browser to update itself with better optimizations eventually.
-
-"There is nothing more permanent than a temporary hack." Chances are, the code you write now to work around some performance bug will probably outlive the performance bug in the browser itself.
-
-In the days when a browser only updated once every five years, that was a tougher call to make. But as it stands now, browsers across the board are updating at a much more rapid interval (though obviously the mobile world still lags), and they're all competing to optimize web features better and better.
-
-If you run across a case where a browser *does* have a performance wart that others don't suffer from, make sure to report it to them through whatever means you have available. Most browsers have open public bug trackers suitable for this purpose.
-
-**Tip:** I'd only suggest working around a performance issue in a browser if it was a really drastic show-stopper, not just an annoyance or frustration. And I'd be very careful to check that the performance hack didn't have noticeable negative side effects in another browser.
-
-### Big Picture
-
-Instead of worrying about all these microperformance nuances, we should instead be looking at big-picture types of optimizations.
-
-How do you know what's big picture or not? You have to first understand if your code is running on a critical path or not. If it's not on the critical path, chances are your optimizations are not worth much.
-
-Ever heard the admonition, "that's premature optimization!"? It comes from a famous quote from Donald Knuth: "premature optimization is the root of all evil.". Many developers cite this quote to suggest that most optimizations are "premature" and are thus a waste of effort. The truth is, as usual, more nuanced.
-
-Here is Knuth's quote, in context:
-
-> Programmers waste enormous amounts of time thinking about, or worrying about, the speed of **noncritical** parts of their programs, and these attempts at efficiency actually have a strong negative impact when debugging and maintenance are considered. We should forget about small efficiencies, say about 97% of the time: premature optimization is the root of all evil. Yet we should not pass up our opportunities in that **critical** 3%. [emphasis added]
-
-(http://web.archive.org/web/20130731202547/http://pplab.snu.ac.kr/courses/adv_pl05/papers/p261-knuth.pdf, Computing Surveys, Vol 6, No 4, December 1974)
-
-I believe it's a fair paraphrasing to say that Knuth *meant*: "non-critical path optimization is the root of all evil." So the key is to figure out if your code is on the critical path -- you should optimize it! -- or not.
-
-I'd even go so far as to say this: no amount of time spent optimizing critical paths is wasted, no matter how little is saved; but no amount of optimization on noncritical paths is justified, no matter how much is saved.
-
-If your code is on the critical path, such as a "hot" piece of code that's going to be run over and over again, or in UX critical places where users will notice, like an animation loop or CSS style updates, then you should spare no effort in trying to employ relevant, measurably significant optimizations.
-
-For example, consider a critical path animation loop that needs to coerce a string value to a number. There are of course multiple ways to do that (see the *Types & Grammar* title of this book series), but which one if any is the fastest?
-
-```js
-var x = "42";	// need number `42`
-
-// Option 1: let implicit coercion automatically happen
-var y = x / 2;
-
-// Option 2: use `parseInt(..)`
-var y = parseInt( x, 0 ) / 2;
-
-// Option 3: use `Number(..)`
-var y = Number( x ) / 2;
-
-// Option 4: use `+` unary operator
-var y = +x / 2;
-
-// Option 5: use `|` unary operator
-var y = (x | 0) / 2;
-```
-
-**Note:** I will leave it as an exercise to the reader to set up a test if you're interested in examining the minute differences in performance among these options.
-
-When considering these different options, as they say, "One of these things is not like the others." `parseInt(..)` does the job, but it also does a lot more -- it parses the string rather than just coercing. You can probably guess, correctly, that `parseInt(..)` is a slower option, and you should probably avoid it.
-
-Of course, if `x` can ever be a value that **needs parsing**, such as `"42px"` (like from a CSS style lookup), then `parseInt(..)` really is the only suitable option!
-
-`Number(..)` is also a function call. From a behavioral perspective, it's identical to the `+` unary operator option, but it may in fact be a little slower, requiring more machinery to execute the function. Of course, it's also possible that the JS engine recognizes this behavioral symmetry and just handles the inlining of `Number(..)`'s behavior (aka `+x`) for you!
-
-But remember, obsessing about `+x` versus `x | 0` is in most cases likely a waste of effort. This is a microperformance issue, and one that you shouldn't let dictate/degrade the readability of your program.
-
-While performance is very important in critical paths of your program, it's not the only factor. Among several options that are roughly similar in performance, readability should be another important concern.
-
-## Tail Call Optimization (TCO)
-
-As we briefly mentioned earlier, ES6 includes a specific requirement that ventures into the world of performance. It's related to a specific form of optimization that can occur with function calls: *tail call optimization*.
-
-Briefly, a "tail call" is a function call that appears at the "tail" of another function, such that after the call finishes, there's nothing left to do (except perhaps return its result value).
-
-For example, here's a non-recursive setup with tail calls:
-
-```js
-function foo(x) {
-	return x;
-}
-
-function bar(y) {
-	return foo( y + 1 );	// tail call
-}
-
-function baz() {
-	return 1 + bar( 40 );	// not tail call
-}
-
-baz();						// 42
-```
-
-`foo(y+1)` is a tail call in `bar(..)` because after `foo(..)` finishes, `bar(..)` is also finished except in this case returning the result of the `foo(..)` call. However, `bar(40)` is *not* a tail call because after it completes, its result value must be added to `1` before `baz()` can return it.
-
-Without getting into too much nitty-gritty detail, calling a new function requires an extra amount of reserved memory to manage the call stack, called a "stack frame." So the preceding snippet would generally require a stack frame for each of `baz()`, `bar(..)`, and `foo(..)` all at the same time.
-
-However, if a TCO-capable engine can realize that the `foo(y+1)` call is in *tail position* meaning `bar(..)` is basically complete, then when calling `foo(..)`, it doesn't need to create a new stack frame, but can instead reuse the existing stack frame from `bar(..)`. That's not only faster, but it also uses less memory.
-
-That sort of optimization isn't a big deal in a simple snippet, but it becomes a *much bigger deal* when dealing with recursion, especially if the recursion could have resulted in hundreds or thousands of stack frames. With TCO the engine can perform all those calls with a single stack frame!
-
-Recursion is a hairy topic in JS because without TCO, engines have had to implement arbitrary (and different!) limits to how deep they will let the recursion stack get before they stop it, to prevent running out of memory. With TCO, recursive functions with *tail position* calls can essentially run unbounded, because there's never any extra usage of memory!
-
-Consider that recursive `factorial(..)` from before, but rewritten to make it TCO friendly:
-
-```js
-function factorial(n) {
-	function fact(n,res) {
-		if (n < 2) return res;
-
-		return fact( n - 1, n * res );
+	else {
+		return idx;
 	}
-
-	return fact( n, 1 );
-}
-
-factorial( 5 );		// 120
+} );
+// [ 0, 1, "FOO", 3 ]
 ```
 
-This version of `factorial(..)` is still recursive, but it's also optimizable with TCO, because both inner `fact(..)` calls are in *tail position*.
+**Note:** As with other array methods that take callbacks, `Array.from(..)` takes an optional third argument that if set will specify the `this` binding for the callback passed as the second argument. Otherwise, `this` will be `undefined`.
 
-**Note:** It's important to note that TCO only applies if there's actually a tail call. If you write recursive functions without tail calls, the performance will still fall back to normal stack frame allocation, and the engines' limits on such recursive call stacks will still apply. Many recursive functions can be rewritten as we just showed with `factorial(..)`, but it takes careful attention to detail.
+See "TypedArrays" in Chapter 5 for an example of using `Array.from(..)` in translating values from an array of 8-bit values to an array of 16-bit values.
 
-One reason that ES6 requires engines to implement TCO rather than leaving it up to their discretion is because the *lack of TCO* actually tends to reduce the chances that certain algorithms will be implemented in JS using recursion, for fear of the call stack limits.
+### Creating Arrays and Subtypes
 
-If the lack of TCO in the engine would just gracefully degrade to slower performance in all cases, it wouldn't probably have been something that ES6 needed to *require*. But because the lack of TCO can actually make certain programs impractical, it's more an important feature of the language than just a hidden implementation detail.
+In the last couple of sections, we've discussed `Array.of(..)` and `Array.from(..)`, both of which create a new array in a similar way to a constructor. But what do they do in subclasses? Do they create instances of the base `Array` or the derived subclass?
 
-ES6 guarantees that from now on, JS developers will be able to rely on this optimization across all ES6+ compliant browsers. That's a win for JS performance!
+```js
+class MyCoolArray extends Array {
+	..
+}
+
+MyCoolArray.from( [1, 2] ) instanceof MyCoolArray;	// true
+
+Array.from(
+	MyCoolArray.from( [1, 2] )
+) instanceof MyCoolArray;							// false
+```
+
+Both `of(..)` and `from(..)` use the constructor that they're accessed from to construct the array. So if you use the base `Array.of(..)` you'll get an `Array` instance, but if you use `MyCoolArray.of(..)`, you'll get a `MyCoolArray` instance.
+
+In "Classes" in Chapter 3, we covered the `@@species` setting which all the built-in classes (like `Array`) have defined, which is used by any prototype methods if they create a new instance. `slice(..)` is a great example:
+
+```js
+var x = new MyCoolArray( 1, 2, 3 );
+
+x.slice( 1 ) instanceof MyCoolArray;				// true
+```
+
+Generally, that default behavior will probably be desired, but as we discussed in Chapter 3, you *can* override if you want:
+
+```js
+class MyCoolArray extends Array {
+	// force `species` to be parent constructor
+	static get [Symbol.species]() { return Array; }
+}
+
+var x = new MyCoolArray( 1, 2, 3 );
+
+x.slice( 1 ) instanceof MyCoolArray;				// false
+x.slice( 1 ) instanceof Array;						// true
+```
+
+It's important to note that the `@@species` setting is only used for the prototype methods, like `slice(..)`. It's not used by `of(..)` and `from(..)`; they both just use the `this` binding (whatever constructor is used to make the reference). Consider:
+
+```js
+class MyCoolArray extends Array {
+	// force `species` to be parent constructor
+	static get [Symbol.species]() { return Array; }
+}
+
+var x = new MyCoolArray( 1, 2, 3 );
+
+MyCoolArray.from( x ) instanceof MyCoolArray;		// true
+MyCoolArray.of( [2, 3] ) instanceof MyCoolArray;	// true
+```
+
+### `copyWithin(..)` Prototype Method
+
+`Array#copyWithin(..)` is a new mutator method available to all arrays (including Typed Arrays; see Chapter 5). `copyWithin(..)` copies a portion of an array to another location in the same array, overwriting whatever was there before.
+
+The arguments are *target* (the index to copy to), *start* (the inclusive index to start the copying from), and optionally *end* (the exclusive index to stop copying). If any of the arguments are negative, they're taken to be relative from the end of the array.
+
+Consider:
+
+```js
+[1,2,3,4,5].copyWithin( 3, 0 );			// [1,2,3,1,2]
+
+[1,2,3,4,5].copyWithin( 3, 0, 1 );		// [1,2,3,1,5]
+
+[1,2,3,4,5].copyWithin( 0, -2 );		// [4,5,3,4,5]
+
+[1,2,3,4,5].copyWithin( 0, -2, -1 );	// [4,2,3,4,5]
+```
+
+The `copyWithin(..)` method does not extend the array's length, as the first example in the previous snippet shows. Copying simply stops when the end of the array is reached.
+
+Contrary to what you might think, the copying doesn't always go in left-to-right (ascending index) order. It's possible this would result in repeatedly copying an already copied value if the from and target ranges overlap, which is presumably not desired behavior.
+
+So internally, the algorithm avoids this case by copying in reverse order to avoid that gotcha. Consider:
+
+```js
+[1,2,3,4,5].copyWithin( 2, 1 );		// ???
+```
+
+If the algorithm was strictly moving left to right, then the `2` should be copied to overwrite the `3`, then *that* copied `2` should be copied to overwrite `4`, then *that* copied `2` should be copied to overwrite `5`, and you'd end up with `[1,2,2,2,2]`.
+
+Instead, the copying algorithm reverses direction and copies `4` to overwrite `5`, then copies `3` to overwrite `4`, then copies `2` to overwrite `3`, and the final result is `[1,2,2,3,4]`. That's probably more "correct" in terms of expectation, but it can be confusing if you're only thinking about the copying algorithm in a naive left-to-right fashion.
+
+### `fill(..)` Prototype Method
+
+Filling an existing array entirely (or partially) with a specified value is natively supported as of ES6 with the `Array#fill(..)` method:
+
+```js
+var a = Array( 4 ).fill( undefined );
+a;
+// [undefined,undefined,undefined,undefined]
+```
+
+`fill(..)` optionally takes *start* and *end* parameters, which indicate a subset portion of the array to fill, such as:
+
+```js
+var a = [ null, null, null, null ].fill( 42, 1, 3 );
+
+a;									// [null,42,42,null]
+```
+
+### `find(..)` Prototype Method
+
+The most common way to search for a value in an array has generally been the `indexOf(..)` method, which returns the index the value is found at or `-1` if not found:
+
+```js
+var a = [1,2,3,4,5];
+
+(a.indexOf( 3 ) != -1);				// true
+(a.indexOf( 7 ) != -1);				// false
+
+(a.indexOf( "2" ) != -1);			// false
+```
+
+The `indexOf(..)` comparison requires a strict `===` match, so a search for `"2"` fails to find a value of `2`, and vice versa. There's no way to override the matching algorithm for `indexOf(..)`. It's also unfortunate/ungraceful to have to make the manual comparison to the `-1` value.
+
+**Tip:** See the *Types & Grammar* title of this series for an interesting (and controversially confusing) technique to work around the `-1` ugliness with the `~` operator.
+
+Since ES5, the most common workaround to have control over the matching logic has been the `some(..)` method. It works by calling a function callback for each element, until one of those calls returns a `true`/truthy value, and then it stops. Because you get to define the callback function, you have full control over how a match is made:
+
+```js
+var a = [1,2,3,4,5];
+
+a.some( function matcher(v){
+	return v == "2";
+} );								// true
+
+a.some( function matcher(v){
+	return v == 7;
+} );								// false
+```
+
+But the downside to this approach is that you only get the `true`/`false` indicating if a suitably matched value was found, but not what the actual matched value was.
+
+ES6's `find(..)` addresses this. It works basically the same as `some(..)`, except that once the callback returns a `true`/truthy value, the actual array value is returned:
+
+```js
+var a = [1,2,3,4,5];
+
+a.find( function matcher(v){
+	return v == "2";
+} );								// 2
+
+a.find( function matcher(v){
+	return v == 7;					// undefined
+});
+```
+
+Using a custom `matcher(..)` function also lets you match against complex values like objects:
+
+```js
+var points = [
+	{ x: 10, y: 20 },
+	{ x: 20, y: 30 },
+	{ x: 30, y: 40 },
+	{ x: 40, y: 50 },
+	{ x: 50, y: 60 }
+];
+
+points.find( function matcher(point) {
+	return (
+		point.x % 3 == 0 &&
+		point.y % 4 == 0
+	);
+} );								// { x: 30, y: 40 }
+```
+
+**Note:** As with other array methods that take callbacks, `find(..)` takes an optional second argument that if set will specify the `this` binding for the callback passed as the first argument. Otherwise, `this` will be `undefined`.
+
+### `findIndex(..)` Prototype Method
+
+While the previous section illustrates how `some(..)` yields a boolean result for a search of an array, and `find(..)` yields the matched value itself from the array search, there's also a need for finding the positional index of the matched value.
+
+`indexOf(..)` does that, but there's no control over its matching logic; it always uses `===` strict equality. So ES6's `findIndex(..)` is the answer:
+
+```js
+var points = [
+	{ x: 10, y: 20 },
+	{ x: 20, y: 30 },
+	{ x: 30, y: 40 },
+	{ x: 40, y: 50 },
+	{ x: 50, y: 60 }
+];
+
+points.findIndex( function matcher(point) {
+	return (
+		point.x % 3 == 0 &&
+		point.y % 4 == 0
+	);
+} );								// 2
+
+points.findIndex( function matcher(point) {
+	return (
+		point.x % 6 == 0 &&
+		point.y % 7 == 0
+	);
+} );								// -1
+```
+
+Don't use `findIndex(..) != -1` (the way it's always been done with `indexOf(..)`) to get a boolean from the search, because `some(..)` already yields the `true`/`false` you want. And don't do `a[ a.findIndex(..) ]` to get the matched value, because that's what `find(..)` accomplishes. And finally, use `indexOf(..)` if you need the index of a strict match, or `findIndex(..)` if you need the index of a more customized match.
+
+**Note:** As with other array methods that take callbacks, `findIndex(..)` takes an optional second argument that if set will specify the `this` binding for the callback passed as the first argument. Otherwise, `this` will be `undefined`.
+
+### `entries()`, `values()`, `keys()` Prototype Methods
+
+In Chapter 3, we illustrated how data structures can provide a patterned item-by-item enumeration of their values, via an iterator. We then expounded on this approach in Chapter 5, as we explored how the new ES6 collections (Map, Set, etc.) provide several methods for producing different kinds of iterations.
+
+Because it's not new to ES6, `Array` might not be thought of traditionally as a "collection," but it is one in the sense that it provides these same iterator methods: `entries()`, `values()`, and `keys()`. Consider:
+
+```js
+var a = [1,2,3];
+
+[...a.values()];					// [1,2,3]
+[...a.keys()];						// [0,1,2]
+[...a.entries()];					// [ [0,1], [1,2], [2,3] ]
+
+[...a[Symbol.iterator]()];			// [1,2,3]
+```
+
+Just like with `Set`, the default `Array` iterator is the same as what `values()` returns.
+
+In "Avoiding Empty Slots" earlier in this chapter, we illustrated how `Array.from(..)` treats empty slots in an array as just being present slots with `undefined` in them. That's actually because under the covers, the array iterators behave that way:
+
+```js
+var a = [];
+a.length = 3;
+a[1] = 2;
+
+[...a.values()];		// [undefined,2,undefined]
+[...a.keys()];			// [0,1,2]
+[...a.entries()];		// [ [0,undefined], [1,2], [2,undefined] ]
+```
+
+## `Object`
+
+A few additional static helpers have been added to `Object`. Traditionally, functions of this sort have been seen as focused on the behaviors/capabilities of object values.
+
+However, starting with ES6, `Object` static functions will also be for general-purpose global APIs of any sort that don't already belong more naturally in some other location (i.e., `Array.from(..)`).
+
+### `Object.is(..)` Static Function
+
+The `Object.is(..)` static function makes value comparisons in an even more strict fashion than the `===` comparison.
+
+`Object.is(..)` invokes the underlying `SameValue` algorithm (ES6 spec, section 7.2.9). The `SameValue` algorithm is basically the same as the `===` Strict Equality Comparison Algorithm (ES6 spec, section 7.2.13), with two important exceptions.
+
+Consider:
+
+```js
+var x = NaN, y = 0, z = -0;
+
+x === x;							// false
+y === z;							// true
+
+Object.is( x, x );					// true
+Object.is( y, z );					// false
+```
+
+You should continue to use `===` for strict equality comparisons; `Object.is(..)` shouldn't be thought of as a replacement for the operator. However, in cases where you're trying to strictly identify a `NaN` or `-0` value, `Object.is(..)` is now the preferred option.
+
+**Note:** ES6 also adds a `Number.isNaN(..)` utility (discussed later in this chapter) which may be a slightly more convenient test; you may prefer `Number.isNaN(x)` over `Object.is(x,NaN)`. You *can* accurately test for `-0` with a clumsy `x == 0 && 1 / x === -Infinity`, but in this case `Object.is(x,-0)` is much better.
+
+### `Object.getOwnPropertySymbols(..)` Static Function
+
+The "Symbols" section in Chapter 2 discusses the new Symbol primitive value type in ES6.
+
+Symbols are likely going to be mostly used as special (meta) properties on objects. So the `Object.getOwnPropertySymbols(..)` utility was introduced, which retrieves only the symbol properties directly on an object:
+
+```js
+var o = {
+	foo: 42,
+	[ Symbol( "bar" ) ]: "hello world",
+	baz: true
+};
+
+Object.getOwnPropertySymbols( o );	// [ Symbol(bar) ]
+```
+
+### `Object.setPrototypeOf(..)` Static Function
+
+Also in Chapter 2, we mentioned the `Object.setPrototypeOf(..)` utility, which (unsurprisingly) sets the `[[Prototype]]` of an object for the purposes of *behavior delegation* (see the *this & Object Prototypes* title of this series). Consider:
+
+```js
+var o1 = {
+	foo() { console.log( "foo" ); }
+};
+var o2 = {
+	// .. o2's definition ..
+};
+
+Object.setPrototypeOf( o2, o1 );
+
+// delegates to `o1.foo()`
+o2.foo();							// foo
+```
+
+Alternatively:
+
+```js
+var o1 = {
+	foo() { console.log( "foo" ); }
+};
+
+var o2 = Object.setPrototypeOf( {
+	// .. o2's definition ..
+}, o1 );
+
+// delegates to `o1.foo()`
+o2.foo();							// foo
+```
+
+In both previous snippets, the relationship between `o2` and `o1` appears at the end of the `o2` definition. More commonly, the relationship between an `o2` and `o1` is specified at the top of the `o2` definition, as it is with classes, and also with `__proto__` in object literals (see "Setting `[[Prototype]]`" in Chapter 2).
+
+**Warning:** Setting a `[[Prototype]]` right after object creation is reasonable, as shown. But changing it much later is generally not a good idea and will usually lead to more confusion than clarity.
+
+### `Object.assign(..)` Static Function
+
+Many JavaScript libraries/frameworks provide utilities for copying/mixing one object's properties into another (e.g., jQuery's `extend(..)`). There are various nuanced differences between these different utilities, such as whether a property with value `undefined` is ignored or not.
+
+ES6 adds `Object.assign(..)`, which is a simplified version of these algorithms. The first argument is the *target*, and any other arguments passed are the *sources*, which will be processed in listed order. For each source, its enumerable and own (e.g., not "inherited") keys, including symbols, are copied as if by plain `=` assignment. `Object.assign(..)` returns the target object.
+
+Consider this object setup:
+
+```js
+var target = {},
+	o1 = { a: 1 }, o2 = { b: 2 },
+	o3 = { c: 3 }, o4 = { d: 4 };
+
+// setup read-only property
+Object.defineProperty( o3, "e", {
+	value: 5,
+	enumerable: true,
+	writable: false,
+	configurable: false
+} );
+
+// setup non-enumerable property
+Object.defineProperty( o3, "f", {
+	value: 6,
+	enumerable: false
+} );
+
+o3[ Symbol( "g" ) ] = 7;
+
+// setup non-enumerable symbol
+Object.defineProperty( o3, Symbol( "h" ), {
+	value: 8,
+	enumerable: false
+} );
+
+Object.setPrototypeOf( o3, o4 );
+```
+
+Only the properties `a`, `b`, `c`, `e`, and `Symbol("g")` will be copied to `target`:
+
+```js
+Object.assign( target, o1, o2, o3 );
+
+target.a;							// 1
+target.b;							// 2
+target.c;							// 3
+
+Object.getOwnPropertyDescriptor( target, "e" );
+// { value: 5, writable: true, enumerable: true,
+//   configurable: true }
+
+Object.getOwnPropertySymbols( target );
+// [Symbol("g")]
+```
+
+The `d`, `f`, and `Symbol("h")` properties are omitted from copying; non-enumerable properties and non-owned properties are all excluded from the assignment. Also, `e` is copied as a normal property assignment, not duplicated as a read-only property.
+
+In an earlier section, we showed using `setPrototypeOf(..)` to set up a `[[Prototype]]` relationship between an `o2` and `o1` object. There's another form that leverages `Object.assign(..)`:
+
+```js
+var o1 = {
+	foo() { console.log( "foo" ); }
+};
+
+var o2 = Object.assign(
+	Object.create( o1 ),
+	{
+		// .. o2's definition ..
+	}
+);
+
+// delegates to `o1.foo()`
+o2.foo();							// foo
+```
+
+**Note:** `Object.create(..)` is the ES5 standard utility that creates an empty object that is `[[Prototype]]`-linked. See the *this & Object Prototypes* title of this series for more information.
+
+## `Math`
+
+ES6 adds several new mathematic utilities that fill in holes or aid with common operations. All of these can be manually calculated, but most of them are now defined natively so that in some cases the JS engine can either more optimally perform the calculations, or perform them with better decimal precision than their manual counterparts.
+
+It's likely that asm.js/transpiled JS code (see the *Async & Performance* title of this series) is the more likely consumer of many of these utilities rather than direct developers.
+
+Trigonometry:
+
+* `cosh(..)` - Hyperbolic cosine
+* `acosh(..)` - Hyperbolic arccosine
+* `sinh(..)` - Hyperbolic sine
+* `asinh(..)` - Hyperbolic arcsine
+* `tanh(..)` - Hyperbolic tangent
+* `atanh(..)` - Hyperbolic arctangent
+* `hypot(..)` - The squareroot of the sum of the squares (i.e., the generalized Pythagorean theorem)
+
+Arithmetic:
+
+* `cbrt(..)` - Cube root
+* `clz32(..)` - Count leading zeros in 32-bit binary representation
+* `expm1(..)` - The same as `exp(x) - 1`
+* `log2(..)` - Binary logarithm (log base 2)
+* `log10(..)` - Log base 10
+* `log1p(..)` - The same as `log(x + 1)`
+* `imul(..)` - 32-bit integer multiplication of two numbers
+
+Meta:
+
+* `sign(..)` - Returns the sign of the number
+* `trunc(..)` - Returns only the integer part of a number
+* `fround(..)` - Rounds to nearest 32-bit (single precision) floating-point value
+
+## `Number`
+
+Importantly, for your program to properly work, it must accurately handle numbers. ES6 adds some additional properties and functions to assist with common numeric operations.
+
+Two additions to `Number` are just references to the preexisting globals: `Number.parseInt(..)` and `Number.parseFloat(..)`.
+
+### Static Properties
+
+ES6 adds some helpful numeric constants as static properties:
+
+* `Number.EPSILON` - The minimum value between any two numbers: `2^-52` (see Chapter 2 of the *Types & Grammar* title of this series regarding using this value as a tolerance for imprecision in floating-point arithmetic)
+* `Number.MAX_SAFE_INTEGER` - The highest integer that can "safely" be represented unambiguously in a JS number value: `2^53 - 1`
+* `Number.MIN_SAFE_INTEGER` - The lowest integer that can "safely" be represented unambiguously in a JS number value: `-(2^53 - 1)` or `(-2)^53 + 1`.
+
+**Note:** See Chapter 2 of the *Types & Grammar* title of this series for more information about "safe" integers.
+
+### `Number.isNaN(..)` Static Function
+
+The standard global `isNaN(..)` utility has been broken since its inception, in that it returns `true` for things that are not numbers, not just for the actual `NaN` value, because it coerces the argument to a number type (which can falsely result in a NaN). ES6 adds a fixed utility `Number.isNaN(..)` that works as it should:
+
+```js
+var a = NaN, b = "NaN", c = 42;
+
+isNaN( a );							// true
+isNaN( b );							// true -- oops!
+isNaN( c );							// false
+
+Number.isNaN( a );					// true
+Number.isNaN( b );					// false -- fixed!
+Number.isNaN( c );					// false
+```
+
+### `Number.isFinite(..)` Static Function
+
+There's a temptation to look at a function name like `isFinite(..)` and assume it's simply "not infinite". That's not quite correct, though. There's more nuance to this new ES6 utility. Consider:
+
+```js
+var a = NaN, b = Infinity, c = 42;
+
+Number.isFinite( a );				// false
+Number.isFinite( b );				// false
+
+Number.isFinite( c );				// true
+```
+
+The standard global `isFinite(..)` coerces its argument, but `Number.isFinite(..)` omits the coercive behavior:
+
+```js
+var a = "42";
+
+isFinite( a );						// true
+Number.isFinite( a );				// false
+```
+
+You may still prefer the coercion, in which case using the global `isFinite(..)` is a valid choice. Alternatively, and perhaps more sensibly, you can use `Number.isFinite(+x)`, which explicitly coerces `x` to a number before passing it in (see Chapter 4 of the *Types & Grammar* title of this series).
+
+### Integer-Related Static Functions
+
+JavaScript number values are always floating point (IEEE-754). So the notion of determining if a number is an "integer" is not about checking its type, because JS makes no such distinction.
+
+Instead, you need to check if there's any non-zero decimal portion of the value. The easiest way to do that has commonly been:
+
+```js
+x === Math.floor( x );
+```
+
+ES6 adds a `Number.isInteger(..)` helper utility that potentially can determine this quality slightly more efficiently:
+
+```js
+Number.isInteger( 4 );				// true
+Number.isInteger( 4.2 );			// false
+```
+
+**Note:** In JavaScript, there's no difference between `4`, `4.`, `4.0`, or `4.0000`. All of these would be considered an "integer", and would thus yield `true` from `Number.isInteger(..)`.
+
+In addition, `Number.isInteger(..)` filters out some clearly not-integer values that `x === Math.floor(x)` could potentially mix up:
+
+```js
+Number.isInteger( NaN );			// false
+Number.isInteger( Infinity );		// false
+```
+
+Working with "integers" is sometimes an important bit of information, as it can simplify certain kinds of algorithms. JS code by itself will not run faster just from filtering for only integers, but there are optimization techniques the engine can take (e.g., asm.js) when only integers are being used.
+
+Because of `Number.isInteger(..)`'s handling of `NaN` and `Infinity` values, defining a `isFloat(..)` utility would not be just as simple as `!Number.isInteger(..)`. You'd need to do something like:
+
+```js
+function isFloat(x) {
+	return Number.isFinite( x ) && !Number.isInteger( x );
+}
+
+isFloat( 4.2 );						// true
+isFloat( 4 );						// false
+
+isFloat( NaN );						// false
+isFloat( Infinity );				// false
+```
+
+**Note:** It may seem strange, but Infinity should neither be considered an integer nor a float.
+
+ES6 also defines a `Number.isSafeInteger(..)` utility, which checks to make sure the value is both an integer and within the range of `Number.MIN_SAFE_INTEGER`-`Number.MAX_SAFE_INTEGER` (inclusive).
+
+```js
+var x = Math.pow( 2, 53 ),
+	y = Math.pow( -2, 53 );
+
+Number.isSafeInteger( x - 1 );		// true
+Number.isSafeInteger( y + 1 );		// true
+
+Number.isSafeInteger( x );			// false
+Number.isSafeInteger( y );			// false
+```
+
+## `String`
+
+Strings already have quite a few helpers prior to ES6, but even more have been added to the mix.
+
+### Unicode Functions
+
+"Unicode-Aware String Operations" in Chapter 2 discusses `String.fromCodePoint(..)`, `String#codePointAt(..)`, and `String#normalize(..)` in detail. They have been added to improve Unicode support in JS string values.
+
+```js
+String.fromCodePoint( 0x1d49e );			// "𝒞"
+
+"ab𝒞d".codePointAt( 2 ).toString( 16 );		// "1d49e"
+```
+
+The `normalize(..)` string prototype method is used to perform Unicode normalizations that either combine characters with adjacent "combining marks" or decompose combined characters.
+
+Generally, the normalization won't create a visible effect on the contents of the string, but will change the contents of the string, which can affect how things like the `length` property are reported, as well as how character access by position behave:
+
+```js
+var s1 = "e\u0301";
+s1.length;							// 2
+
+var s2 = s1.normalize();
+s2.length;							// 1
+s2 === "\xE9";						// true
+```
+
+`normalize(..)` takes an optional argument that specifies the normalization form to use. This argument must be one of the following four values: `"NFC"` (default), `"NFD"`, `"NFKC"`, or `"NFKD"`.
+
+**Note:** Normalization forms and their effects on strings is well beyond the scope of what we'll discuss here. See "Unicode Normalization Forms" (http://www.unicode.org/reports/tr15/) for more information.
+
+### `String.raw(..)` Static Function
+
+The `String.raw(..)` utility is provided as a built-in tag function to use with template string literals (see Chapter 2) for obtaining the raw string value without any processing of escape sequences.
+
+This function will almost never be called manually, but will be used with tagged template literals:
+
+```js
+var str = "bc";
+
+String.raw`\ta${str}d\xE9`;
+// "\tabcd\xE9", not "	abcdé"
+```
+
+In the resultant string, `\` and `t` are separate raw characters, not the one escape sequence character `\t`. The same is true with the Unicode escape sequence.
+
+### `repeat(..)` Prototype Function
+
+In languages like Python and Ruby, you can repeat a string as:
+
+```js
+"foo" * 3;							// "foofoofoo"
+```
+
+That doesn't work in JS, because `*` multiplication is only defined for numbers, and thus `"foo"` coerces to the `NaN` number.
+
+However, ES6 defines a string prototype method `repeat(..)` to accomplish the task:
+
+```js
+"foo".repeat( 3 );					// "foofoofoo"
+```
+
+### String Inspection Functions
+
+In addition to `String#indexOf(..)` and `String#lastIndexOf(..)` from prior to ES6, three new methods for searching/inspection have been added: `startsWith(..)`, `endsWidth(..)`, and `includes(..)`.
+
+```js
+var palindrome = "step on no pets";
+
+palindrome.startsWith( "step on" );	// true
+palindrome.startsWith( "on", 5 );	// true
+
+palindrome.endsWith( "no pets" );	// true
+palindrome.endsWith( "no", 10 );	// true
+
+palindrome.includes( "on" );		// true
+palindrome.includes( "on", 6 );		// false
+```
+
+For all the string search/inspection methods, if you look for an empty string `""`, it will either be found at the beginning or the end of the string.
+
+**Warning:** These methods will not by default accept a regular expression for the search string. See "Regular Expression Symbols" in Chapter 7 for information about disabling the `isRegExp` check that is performed on this first argument.
 
 ## Review
 
-Effectively benchmarking performance of a piece of code, especially to compare it to another option for that same code to see which approach is faster, requires careful attention to detail.
+ES6 adds many extra API helpers on the various built-in native objects:
 
-Rather than rolling your own statistically valid benchmarking logic, just use the Benchmark.js library, which does that for you. But be careful about how you author tests, because it's far too easy to construct a test that seems valid but that's actually flawed -- even tiny differences can skew the results to be completely unreliable.
+* `Array` adds `of(..)` and `from(..)` static functions, as well as prototype functions like `copyWithin(..)` and `fill(..)`.
+* `Object` adds static functions like `is(..)` and `assign(..)`.
+* `Math` adds static functions like `acosh(..)` and `clz32(..)`.
+* `Number` adds static properties like `Number.EPSILON`, as well as static functions like `Number.isFinite(..)`.
+* `String` adds static functions like `String.fromCodePoint(..)` and `String.raw(..)`, as well as prototype functions like `repeat(..)` and `includes(..)`.
 
-It's important to get as many test results from as many different environments as possible to eliminate hardware/device bias. jsPerf.com is a fantastic website for crowdsourcing performance benchmark test runs.
-
-Many common performance tests unfortunately obsess about irrelevant microperformance details like `x++` versus `++x`. Writing good tests means understanding how to focus on big picture concerns, like optimizing on the critical path, and avoiding falling into traps like different JS engines' implementation details.
-
-Tail call optimization (TCO) is a required optimization as of ES6 that will make some recursive patterns practical in JS where they would have been impossible otherwise. TCO allows a function call in the *tail position* of another function to execute without needing any extra resources, which means the engine no longer needs to place arbitrary restrictions on call stack depth for recursive algorithms.
+Most of these additions can be polyfilled (see ES6 Shim), and were inspired by utilities in common JS libraries/frameworks.

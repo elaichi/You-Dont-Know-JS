@@ -1,368 +1,545 @@
-# You Don't Know JS: Async & Performance
-# Chapter 5: Program Performance
+# You Don't Know JS: ES6 & Beyond
+# Chapter 5: Collections
 
-This book so far has been all about how to leverage asynchrony patterns more effectively. But we haven't directly addressed why asynchrony really matters to JS. The most obvious explicit reason is **performance**.
+Structured collection and access to data is a critical component of just about any JS program. From the beginning of the language up to this point, the array and the object have been our primary mechanism for creating data structures. Of course, many higher-level data structures have been built on top of these, as user-land libraries.
 
-For example, if you have two Ajax requests to make, and they're independent, but you need to wait on them both to finish before doing the next task, you have two options for modeling that interaction: serial and concurrent.
+As of ES6, some of the most useful (and performance-optimizing!) data structure abstractions have been added as native components of the language.
 
-You could make the first request and wait to start the second request until the first finishes. Or, as we've seen both with promises and generators, you could make both requests "in parallel," and express the "gate" to wait on both of them before moving on.
+We'll start this chapter first by looking at *TypedArrays*, technically contemporary to ES5 efforts several years ago, but only standardized as companions to WebGL and not JavaScript itself. As of ES6, these have been adopted directly by the language specification, which gives them first-class status.
 
-Clearly, the latter is usually going to be more performant than the former. And better performance generally leads to better user experience.
+Maps are like objects (key/value pairs), but instead of just a string for the key, you can use any value -- even another object or map! Sets are similar to arrays (lists of values), but the values are unique; if you add a duplicate, it's ignored. There are also weak (in relation to memory/garbage collection) counterparts: WeakMap and WeakSet.
 
-It's even possible that asynchrony (interleaved concurrency) can improve just the perception of performance, even if the overall program still takes the same amount of time to complete. User perception of performance is every bit -- if not more! -- as important as actual measurable performance.
+## TypedArrays
 
-We want to now move beyond localized asynchrony patterns to talk about some bigger picture performance details at the program level.
+As we cover in the *Types & Grammar* title of this series, JS does have a set of built-in types, like `number` and `string`. It'd be tempting to look at a feature named "typed array" and assume it means an array of a specific type of values, like an array of only strings.
 
-**Note:** You may be wondering about micro-performance issues like if `a++` or `++a` is faster. We'll look at those sorts of performance details in the next chapter on "Benchmarking & Tuning."
+However, typed arrays are really more about providing structured access to binary data using array-like semantics (indexed access, etc.). The "type" in the name refers to a "view" layered on type of the bucket of bits, which is essentially a mapping of whether the bits should be viewed as an array of 8-bit signed integers, 16-bit signed integers, and so on.
 
-## Web Workers
-
-If you have processing-intensive tasks but you don't want them to run on the main thread (which may slow down the browser/UI), you might have wished that JavaScript could operate in a multithreaded manner.
-
-In Chapter 1, we talked in detail about how JavaScript is single threaded. And that's still true. But a single thread isn't the only way to organize the execution of your program.
-
-Imagine splitting your program into two pieces, and running one of those pieces on the main UI thread, and running the other piece on an entirely separate thread.
-
-What kinds of concerns would such an architecture bring up?
-
-For one, you'd want to know if running on a separate thread meant that it ran in parallel (on systems with multiple CPUs/cores) such that a long-running process on that second thread would **not** block the main program thread. Otherwise, "virtual threading" wouldn't be of much benefit over what we already have in JS with async concurrency.
-
-And you'd want to know if these two pieces of the program have access to the same shared scope/resources. If they do, then you have all the questions that multithreaded languages (Java, C++, etc.) deal with, such as needing cooperative or preemptive locking (mutexes, etc.). That's a lot of extra work, and shouldn't be undertaken lightly.
-
-Alternatively, you'd want to know how these two pieces could "communicate" if they couldn't share scope/resources.
-
-All these are great questions to consider as we explore a feature added to the web platform circa HTML5 called "Web Workers." This is a feature of the browser (aka host environment) and actually has almost nothing to do with the JS language itself. That is, JavaScript does not *currently* have any features that support threaded execution.
-
-But an environment like your browser can easily provide multiple instances of the JavaScript engine, each on its own thread, and let you run a different program in each thread. Each of those separate threaded pieces of your program is called a "(Web) Worker." This type of parallelism is called "task parallelism," as the emphasis is on splitting up chunks of your program to run in parallel.
-
-From your main JS program (or another Worker), you instantiate a Worker like so:
+How do you construct such a bit-bucket? It's called a "buffer," and you construct it most directly with the `ArrayBuffer(..)` constructor:
 
 ```js
-var w1 = new Worker( "http://some.url.1/mycoolworker.js" );
+var buf = new ArrayBuffer( 32 );
+buf.byteLength;							// 32
 ```
 
-The URL should point to the location of a JS file (not an HTML page!) which is intended to be loaded into a Worker. The browser will then spin up a separate thread and let that file run as an independent program in that thread.
+`buf` is now a binary buffer that is 32-bytes long (256-bits), that's pre-initialized to all `0`s. A buffer by itself doesn't really allow you any interaction exception for checking its `byteLength` property.
 
-**Note:** The kind of Worker created with such a URL is called a "Dedicated Worker." But instead of providing a URL to an external file, you can also create an "Inline Worker" by providing a Blob URL (another HTML5 feature); essentially it's an inline file stored in a single (binary) value. However, Blobs are beyond the scope of what we'll discuss here.
+**Tip:** Several web platform features use or return array buffers, such as `FileReader#readAsArrayBuffer(..)`, `XMLHttpRequest#send(..)`, and `ImageData` (canvas data).
 
-Workers do not share any scope or resources with each other or the main program -- that would bring all the nightmares of threaded programming to the forefront -- but instead have a basic event messaging mechanism connecting them.
-
-The `w1` Worker object is an event listener and trigger, which lets you subscribe to events sent by the Worker as well as send events to the Worker.
-
-Here's how to listen for events (actually, the fixed `"message"` event):
+But on top of this array buffer, you can then layer a "view," which comes in the form of a typed array. Consider:
 
 ```js
-w1.addEventListener( "message", function(evt){
-	// evt.data
-} );
+var arr = new Uint16Array( buf );
+arr.length;							// 16
 ```
 
-And you can send the `"message"` event to the Worker:
+`arr` is a typed array of 16-bit unsigned integers mapped over the 256-bit `buf` buffer, meaning you get 16 elements.
+
+### Endianness
+
+It's very important to understand that the `arr` is mapped using the endian-setting (big-endian or little-endian) of the platform the JS is running on. This can be an issue if the binary data is created with one endianness but interpreted on a platform with the opposite endianness.
+
+Endian means if the low-order byte (collection of 8-bits) of a multi-byte number -- such as the 16-bit unsigned ints we created in the earlier snippet -- is on the right or the left of the number's bytes.
+
+For example, let's imagine the base-10 number `3085`, which takes 16-bits to represent. If you have just one 16-bit number container, it'd be represented in binary as `0000110000001101` (hexadecimal `0c0d`) regardless of endianness.
+
+But if `3085` was represented with two 8-bit numbers, the endianness would significantly affect its storage in memory:
+
+* `0000110000001101` / `0c0d` (big endian)
+* `0000110100001100` / `0d0c` (little endian)
+
+If you received the bits of `3085` as `0000110100001100` from a little-endian system, but you layered a view on top of it in a big-endian system, you'd instead see value `3340` (base-10) and `0d0c` (base-16).
+
+Little endian is the most common representation on the web these days, but there are definitely browsers where that's not true. It's important that you understand the endianness of both the producer and consumer of a chunk of binary data.
+
+From MDN, here's a quick way to test the endianness of your JavaScript:
 
 ```js
-w1.postMessage( "something cool to say" );
+var littleEndian = (function() {
+	var buffer = new ArrayBuffer( 2 );
+	new DataView( buffer ).setInt16( 0, 256, true );
+	return new Int16Array( buffer )[0] === 256;
+})();
 ```
 
-Inside the Worker, the messaging is totally symmetrical:
+`littleEndian` will be `true` or `false`; for most browsers, it should return `true`. This test uses `DataView(..)`, which allows more low-level, fine-grained control over accessing (setting/getting) the bits from the view you layer over the buffer. The third parameter of the `setInt16(..)` method in the previous snippet is for telling the `DataView` what endianness you're wanting it to use for that operation.
+
+**Warning:** Do not confuse endianness of underlying binary storage in array buffers with how a given number is represented when exposed in a JS program. For example, `(3085).toString(2)` returns `"110000001101"`, which with an assumed leading four `"0"`s appears to be the big-endian representation. In fact, this representation is based on a single 16-bit view, not a view of two 8-bit bytes. The `DataView` test above is the best way to determine endianness for your JS environment.
+
+### Multiple Views
+
+A single buffer can have multiple views attached to it, such as:
 
 ```js
-// "mycoolworker.js"
+var buf = new ArrayBuffer( 2 );
 
-addEventListener( "message", function(evt){
-	// evt.data
-} );
+var view8 = new Uint8Array( buf );
+var view16 = new Uint16Array( buf );
 
-postMessage( "a really cool reply" );
+view16[0] = 3085;
+view8[0];						// 13
+view8[1];						// 12
+
+view8[0].toString( 16 );		// "d"
+view8[1].toString( 16 );		// "c"
+
+// swap (as if endian!)
+var tmp = view8[0];
+view8[0] = view8[1];
+view8[1] = tmp;
+
+view16[0];						// 3340
 ```
 
-Notice that a dedicated Worker is in a one-to-one relationship with the program that created it. That is, the `"message"` event doesn't need any disambiguation here, because we're sure that it could only have come from this one-to-one relationship -- either it came from the Worker or the main page.
+The typed array constructors have multiple signature variations. We've shown so far only passing them an existing buffer. However, that form also takes two extra parameters: `byteOffset` and `length`. In other words, you can start the typed array view at a location other than `0` and you can make it span less than the full length of the buffer.
 
-Usually the main page application creates the Workers, but a Worker can instantiate its own child Worker(s) -- known as subworkers -- as necessary. Sometimes this is useful to delegate such details to a sort of "master" Worker that spawns other Workers to process parts of a task. Unfortunately, at the time of this writing, Chrome still does not support subworkers, while Firefox does.
+If the buffer of binary data includes data in non-uniform size/location, this technique can be quite useful.
 
-To kill a Worker immediately from the program that created it, call `terminate()` on the Worker object (like `w1` in the previous snippets). Abruptly terminating a Worker thread does not give it any chance to finish up its work or clean up any resources. It's akin to you closing a browser tab to kill a page.
-
-If you have two or more pages (or multiple tabs with the same page!) in the browser that try to create a Worker from the same file URL, those will actually end up as completely separate Workers. Shortly, we'll discuss a way to "share" a Worker.
-
-**Note:** It may seem like a malicious or ignorant JS program could easily perform a denial-of-service attack on a system by spawning hundreds of Workers, seemingly each with their own thread. While it's true that it's somewhat of a guarantee that a Worker will end up on a separate thread, this guarantee is not unlimited. The system is free to decide how many actual threads/CPUs/cores it really wants to create. There's no way to predict or guarantee how many you'll have access to, though many people assume it's at least as many as the number of CPUs/cores available. I think the safest assumption is that there's at least one other thread besides the main UI thread, but that's about it.
-
-### Worker Environment
-
-Inside the Worker, you do not have access to any of the main program's resources. That means you cannot access any of its global variables, nor can you access the page's DOM or other resources. Remember: it's a totally separate thread.
-
-You can, however, perform network operations (Ajax, WebSockets) and set timers. Also, the Worker has access to its own copy of several important global variables/features, including `navigator`, `location`, `JSON`, and `applicationCache`.
-
-You can also load extra JS scripts into your Worker, using `importScripts(..)`:
+For example, consider a binary buffer that has a 2-byte number (aka "word") at the beginning, followed by two 1-byte numbers, followed by a 32-bit floating point number. Here's how you can access that data with multiple views on the same buffer, offsets, and lengths:
 
 ```js
-// inside the Worker
-importScripts( "foo.js", "bar.js" );
+var first = new Uint16Array( buf, 0, 2 )[0],
+	second = new Uint8Array( buf, 2, 1 )[0],
+	third = new Uint8Array( buf, 3, 1 )[0],
+	fourth = new Float32Array( buf, 4, 4 )[0];
 ```
 
-These scripts are loaded synchronously, which means the `importScripts(..)` call will block the rest of the Worker's execution until the file(s) are finished loading and executing.
+### TypedArray Constructors
 
-**Note:** There have also been some discussions about exposing the `<canvas>` API to Workers, which combined with having canvases be Transferables (see the "Data Transfer" section), would allow Workers to perform more sophisticated off-thread graphics processing, which can be useful for high-performance gaming (WebGL) and other similar applications. Although this doesn't exist yet in any browsers, it's likely to happen in the near future.
+In addition to the `(buffer,[offset, [length]])` form examined in the previous section, typed array constructors also support these forms:
 
-What are some common uses for Web Workers?
+* [constructor]`(length)`: Creates a new view over a new buffer of `length` bytes
+* [constructor]`(typedArr)`: Creates a new view and buffer, and copies the contents from the `typedArr` view
+* [constructor]`(obj)`: Creates a new view and buffer, and iterates over the array-like or object `obj` to copy its contents
 
-* Processing intensive math calculations
-* Sorting large data sets
-* Data operations (compression, audio analysis, image pixel manipulations, etc.)
-* High-traffic network communications
+The following typed array constructors are available as of ES6:
 
-### Data Transfer
+* `Int8Array` (8-bit signed integers), `Uint8Array` (8-bit unsigned integers)
+	- `Uint8ClampedArray` (8-bit unsigned integers, each value clamped on setting to the `0`-`255` range)
+* `Int16Array` (16-bit signed integers), `Uint16Array` (16-bit unsigned integers)
+* `Int32Array` (32-bit signed integers), `Uint32Array` (32-bit unsigned integers)
+* `Float32Array` (32-bit floating point, IEEE-754)
+* `Float64Array` (64-bit floating point, IEEE-754)
 
-You may notice a common characteristic of most of those uses, which is that they require a large amount of information to be transferred across the barrier between threads using the event mechanism, perhaps in both directions.
+Instances of typed array constructors are almost the same as regular native arrays. Some differences include having a fixed length and the values all being of the same "type."
 
-In the early days of Workers, serializing all data to a string value was the only option. In addition to the speed penalty of the two-way serializations, the other major negative was that the data was being copied, which meant a doubling of memory usage (and the subsequent churn of garbage collection).
-
-Thankfully, we now have a few better options.
-
-If you pass an object, a so-called "Structured Cloning Algorithm" (https://developer.mozilla.org/en-US/docs/Web/Guide/API/DOM/The_structured_clone_algorithm) is used to copy/duplicate the object on the other side. This algorithm is fairly sophisticated and can even handle duplicating objects with circular references. The to-string/from-string performance penalty is not paid, but we still have duplication of memory using this approach. There is support for this in IE10 and above, as well as all the other major browsers.
-
-An even better option, especially for larger data sets, is "Transferable Objects" (http://updates.html5rocks.com/2011/12/Transferable-Objects-Lightning-Fast). What happens is that the object's "ownership" is transferred, but the data itself is not moved. Once you transfer away an object to a Worker, it's empty or inaccessible in the originating location -- that eliminates the hazards of threaded programming over a shared scope. Of course, transfer of ownership can go in both directions.
-
-There really isn't much you need to do to opt into a Transferable Object; any data structure that implements the Transferable interface (https://developer.mozilla.org/en-US/docs/Web/API/Transferable) will automatically be transferred this way (support Firefox & Chrome).
-
-For example, typed arrays like `Uint8Array` (see the *ES6 & Beyond* title of this series) are "Transferables." This is how you'd send a Transferable Object using `postMessage(..)`:
-
-```js
-// `foo` is a `Uint8Array` for instance
-
-postMessage( foo.buffer, [ foo.buffer ] );
-```
-
-The first parameter is the raw buffer and the second parameter is a list of what to transfer.
-
-Browsers that don't support Transferable Objects simply degrade to structured cloning, which means performance reduction rather than outright feature breakage.
-
-### Shared Workers
-
-If your site or app allows for loading multiple tabs of the same page (a common feature), you may very well want to reduce the resource usage of their system by preventing duplicate dedicated Workers; the most common limited resource in this respect is a socket network connection, as browsers limit the number of simultaneous connections to a single host. Of course, limiting multiple connections from a client also eases your server resource requirements.
-
-In this case, creating a single centralized Worker that all the page instances of your site or app can *share* is quite useful.
-
-That's called a `SharedWorker`, which you create like so (support for this is limited to Firefox and Chrome):
-
-```js
-var w1 = new SharedWorker( "http://some.url.1/mycoolworker.js" );
-```
-
-Because a shared Worker can be connected to or from more than one program instance or page on your site, the Worker needs a way to know which program a message comes from. This unique identification is called a "port" -- think network socket ports. So the calling program must use the `port` object of the Worker for communication:
-
-```js
-w1.port.addEventListener( "message", handleMessages );
-
-// ..
-
-w1.port.postMessage( "something cool" );
-```
-
-Also, the port connection must be initialized, as:
-
-```js
-w1.port.start();
-```
-
-Inside the shared Worker, an extra event must be handled: `"connect"`. This event provides the port `object` for that particular connection. The most convenient way to keep multiple connections separate is to use closure (see *Scope & Closures* title of this series) over the `port`, as shown next, with the event listening and transmitting for that connection defined inside the handler for the `"connect"` event:
-
-```js
-// inside the shared Worker
-addEventListener( "connect", function(evt){
-	// the assigned port for this connection
-	var port = evt.ports[0];
-
-	port.addEventListener( "message", function(evt){
-		// ..
-
-		port.postMessage( .. );
-
-		// ..
-	} );
-
-	// initialize the port connection
-	port.start();
-} );
-```
-
-Other than that difference, shared and dedicated Workers have the same capabilities and semantics.
-
-**Note:** Shared Workers survive the termination of a port connection if other port connections are still alive, whereas dedicated Workers are terminated whenever the connection to their initiating program is terminated.
-
-### Polyfilling Web Workers
-
-Web Workers are very attractive performance-wise for running JS programs in parallel. However, you may be in a position where your code needs to run in older browsers that lack support. Because Workers are an API and not a syntax, they can be polyfilled, to an extent.
-
-If a browser doesn't support Workers, there's simply no way to fake multithreading from the performance perspective. Iframes are commonly thought of to provide a parallel environment, but in all modern browsers they actually run on the same thread as the main page, so they're not sufficient for faking parallelism.
-
-As we detailed in Chapter 1, JS's asynchronicity (not parallelism) comes from the event loop queue, so you can force faked Workers to be asynchronous using timers (`setTimeout(..)`, etc.). Then you just need to provide a polyfill for the Worker API. There are some listed here (https://github.com/Modernizr/Modernizr/wiki/HTML5-Cross-Browser-Polyfills#web-workers), but frankly none of them look great.
-
-I've written a sketch of a polyfill for `Worker` here (https://gist.github.com/getify/1b26accb1a09aa53ad25). It's basic, but it should get the job done for simple `Worker` support, given that the two-way messaging works correctly as well as `"onerror"` handling. You could probably also extend it with more features, such as `terminate()` or faked Shared Workers, as you see fit.
-
-**Note:** You can't fake synchronous blocking, so this polyfill just disallows use of `importScripts(..)`. Another option might have been to parse and transform the Worker's code (once Ajax loaded) to handle rewriting to some asynchronous form of an `importScripts(..)` polyfill, perhaps with a promise-aware interface.
-
-## SIMD
-
-Single instruction, multiple data (SIMD) is a form of "data parallelism," as contrasted to "task parallelism" with Web Workers, because the emphasis is not really on program logic chunks being parallelized, but rather multiple bits of data being processed in parallel.
-
-With SIMD, threads don't provide the parallelism. Instead, modern CPUs provide SIMD capability with "vectors" of numbers -- think: type specialized arrays -- as well as instructions that can operate in parallel across all the numbers; these are low-level operations leveraging instruction-level parallelism.
-
-The effort to expose SIMD capability to JavaScript is primarily spearheaded by Intel (https://01.org/node/1495), namely by Mohammad Haghighat (at the time of this writing), in cooperation with Firefox and Chrome teams. SIMD is on an early standards track with a good chance of making it into a future revision of JavaScript, likely in the ES7 timeframe.
-
-SIMD JavaScript proposes to expose short vector types and APIs to JS code, which on those SIMD-enabled systems would map the operations directly through to the CPU equivalents, with fallback to non-parallelized operation "shims" on non-SIMD systems.
-
-The performance benefits for data-intensive applications (signal analysis, matrix operations on graphics, etc.) with such parallel math processing are quite obvious!
-
-Early proposal forms of the SIMD API at the time of this writing look like this:
-
-```js
-var v1 = SIMD.float32x4( 3.14159, 21.0, 32.3, 55.55 );
-var v2 = SIMD.float32x4( 2.1, 3.2, 4.3, 5.4 );
-
-var v3 = SIMD.int32x4( 10, 101, 1001, 10001 );
-var v4 = SIMD.int32x4( 10, 20, 30, 40 );
-
-SIMD.float32x4.mul( v1, v2 );	// [ 6.597339, 67.2, 138.89, 299.97 ]
-SIMD.int32x4.add( v3, v4 );		// [ 20, 121, 1031, 10041 ]
-```
-
-Shown here are two different vector data types, 32-bit floating-point numbers and 32-bit integer numbers. You can see that these vectors are sized exactly to four 32-bit elements, as this matches the SIMD vector sizes (128-bit) available in most modern CPUs. It's also possible we may see an `x8` (or larger!) version of these APIs in the future.
-
-Besides `mul()` and `add()`, many other operations are likely to be included, such as `sub()`, `div()`, `abs()`, `neg()`, `sqrt()`, `reciprocal()`, `reciprocalSqrt()` (arithmetic), `shuffle()` (rearrange vector elements), `and()`, `or()`, `xor()`, `not()` (logical), `equal()`, `greaterThan()`, `lessThan()` (comparison), `shiftLeft()`, `shiftRightLogical()`, `shiftRightArithmetic()` (shifts), `fromFloat32x4()`, and `fromInt32x4()` (conversions).
-
-**Note:** There's an official "prollyfill" (hopeful, expectant, future-leaning polyfill) for the SIMD functionality available (https://github.com/johnmccutchan/ecmascript_simd), which illustrates a lot more of the planned SIMD capability than we've illustrated in this section.
-
-## asm.js
-
-"asm.js" (http://asmjs.org/) is a label for a highly optimizable subset of the JavaScript language. By carefully avoiding certain mechanisms and patterns that are *hard* to optimize (garbage collection, coercion, etc.), asm.js-styled code can be recognized by the JS engine and given special attention with aggressive low-level optimizations.
-
-Distinct from other program performance mechanisms discussed in this chapter, asm.js isn't necessarily something that needs to be adopted into the JS language specification. There *is* an asm.js specification (http://asmjs.org/spec/latest/), but it's mostly for tracking an agreed upon set of candidate inferences for optimization rather than a set of requirements of JS engines.
-
-There's not currently any new syntax being proposed. Instead, asm.js suggests ways to recognize existing standard JS syntax that conforms to the rules of asm.js and let engines implement their own optimizations accordingly.
-
-There's been some disagreement between browser vendors over exactly how asm.js should be activated in a program. Early versions of the asm.js experiment required a `"use asm";` pragma (similar to strict mode's `"use strict";`) to help clue the JS engine to be looking for asm.js optimization opportunities and hints. Others have asserted that asm.js should just be a set of heuristics that engines automatically recognize without the author having to do anything extra, meaning that existing programs could theoretically benefit from asm.js-style optimizations without doing anything special.
-
-### How to Optimize with asm.js
-
-The first thing to understand about asm.js optimizations is around types and coercion (see the *Types & Grammar* title of this series). If the JS engine has to track multiple different types of values in a variable through various operations, so that it can handle coercions between types as necessary, that's a lot of extra work that keeps the program optimization suboptimal.
-
-**Note:** We're going to use asm.js-style code here for illustration purposes, but be aware that it's not commonly expected that you'll author such code by hand. asm.js is more intended to a compilation target from other tools, such as Emscripten (https://github.com/kripken/emscripten/wiki). It's of course possible to write your own asm.js code, but that's usually a bad idea because the code is very low level and managing it can be very time consuming and error prone. Nevertheless, there may be cases where you'd want to hand tweak your code for asm.js optimization purposes.
-
-There are some "tricks" you can use to hint to an asm.js-aware JS engine what the intended type is for variables/operations, so that it can skip these coercion tracking steps.
+However, they share most of the same `prototype` methods. As such, you likely will be able to use them as regular arrays without needing to convert.
 
 For example:
 
 ```js
-var a = 42;
+var a = new Int32Array( 3 );
+a[0] = 10;
+a[1] = 20;
+a[2] = 30;
 
-// ..
+a.map( function(v){
+	console.log( v );
+} );
+// 10 20 30
 
-var b = a;
+a.join( "-" );
+// "10-20-30"
 ```
 
-In that program, the `b = a` assignment leaves the door open for type divergence in variables. However, it could instead be written as:
+**Warning:** You can't use certain `Array.prototype` methods with TypedArrays that don't make sense, such as the mutators (`splice(..)`, `push(..)`, etc.) and `concat(..)`.
+
+Be aware that the elements in TypedArrays really are constrained to the declared bit sizes. If you have a `Uint8Array` and try to assign something larger than an 8-bit value into one of its elements, the value wraps around so as to stay within the bit length.
+
+This could cause problems if you were trying to, for instance, square all the values in a TypedArray. Consider:
 
 ```js
-var a = 42;
+var a = new Uint8Array( 3 );
+a[0] = 10;
+a[1] = 20;
+a[2] = 30;
 
-// ..
+var b = a.map( function(v){
+	return v * v;
+} );
 
-var b = a | 0;
+b;				// [100, 144, 132]
 ```
 
-Here, we've used the `|` ("binary OR") with value `0`, which has no effect on the value other than to make sure it's a 32-bit integer. That code run in a normal JS engine works just fine, but when run in an asm.js-aware JS engine it *can* signal that `b` should always be treated as a 32-bit integer, so the coercion tracking can be skipped.
-
-Similarly, the addition operation between two variables can be restricted to a more performant integer addition (instead of floating point):
+The `20` and `30` values, when squared, resulted in bit overflow. To get around such a limitation, you can use the `TypedArray#from(..)` function:
 
 ```js
-(a + b) | 0
+var a = new Uint8Array( 3 );
+a[0] = 10;
+a[1] = 20;
+a[2] = 30;
+
+var b = Uint16Array.from( a, function(v){
+	return v * v;
+} );
+
+b;				// [100, 400, 900]
 ```
 
-Again, the asm.js-aware JS engine can see that hint and infer that the `+` operation should be 32-bit integer addition because the end result of the whole expression would automatically be 32-bit integer conformed anyway.
+See the "`Array.from(..)` Static Function" section in Chapter 6 for more information about the `Array.from(..)` that is shared with TypedArrays. Specifically, the "Mapping" section explains the mapping function accepted as its second argument.
 
-### asm.js Modules
-
-One of the biggest detractors to performance in JS is around memory allocation, garbage collection, and scope access. asm.js suggests one of the ways around these issues is to declare a more formalized asm.js "module" -- do not confuse these with ES6 modules; see the *ES6 & Beyond* title of this series.
-
-For an asm.js module, you need to explicitly pass in a tightly conformed namespace -- this is referred to in the spec as `stdlib`, as it should represent standard libraries needed -- to import necessary symbols, rather than just using globals via lexical scope. In the base case, the `window` object is an acceptable `stdlib` object for asm.js module purposes, but you could and perhaps should construct an even more restricted one.
-
-You also must declare a "heap" -- which is just a fancy term for a reserved spot in memory where variables can already be used without asking for more memory or releasing previously used memory -- and pass that in, so that the asm.js module won't need to do anything that would cause memory churn; it can just use the pre-reserved space.
-
-A "heap" is likely a typed `ArrayBuffer`, such as:
+One interesting behavior to consider is that TypedArrays have a `sort(..)` method much like regular arrays, but this one defaults to numeric sort comparisons instead of coercing values to strings for lexicographic comparison. For example:
 
 ```js
-var heap = new ArrayBuffer( 0x10000 );	// 64k heap
+var a = [ 10, 1, 2, ];
+a.sort();								// [1,10,2]
+
+var b = new Uint8Array( [ 10, 1, 2 ] );
+b.sort();								// [1,2,10]
 ```
 
-Using that pre-reserved 64k of binary space, an asm.js module can store and retrieve values in that buffer without any memory allocation or garbage collection penalties. For example, the `heap` buffer could be used inside the module to back an array of 64-bit float values like this:
+The `TypedArray#sort(..)` takes an optional compare function argument just like `Array#sort(..)`, which works in exactly the same way.
+
+## Maps
+
+If you have a lot of JS experience, you know that objects are the primary mechanism for creating unordered key/value-pair data structures, otherwise known as maps. However, the major drawback with objects-as-maps is the inability to use a non-string value as the key.
+
+For example, consider:
 
 ```js
-var arr = new Float64Array( heap );
+var m = {};
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m[x] = "foo";
+m[y] = "bar";
+
+m[x];							// "bar"
+m[y];							// "bar"
 ```
 
-OK, so let's make a quick, silly example of an asm.js-styled module to illustrate how these pieces fit together. We'll define a `foo(..)` that takes a start (`x`) and end (`y`) integer for a range, and calculates all the inner adjacent multiplications of the values in the range, and then finally averages those values together:
+What's going on here? The two objects `x` and `y` both stringify to `"[object Object]"`, so only that one key is being set in `m`.
+
+Some have implemented fake maps by maintaining a parallel array of non-string keys alongside an array of the values, such as:
 
 ```js
-function fooASM(stdlib,foreign,heap) {
-	"use asm";
+var keys = [], vals = [];
 
-	var arr = new stdlib.Int32Array( heap );
+var x = { id: 1 },
+	y = { id: 2 };
 
-	function foo(x,y) {
-		x = x | 0;
-		y = y | 0;
+keys.push( x );
+vals.push( "foo" );
 
-		var i = 0;
-		var p = 0;
-		var sum = 0;
-		var count = ((y|0) - (x|0)) | 0;
+keys.push( y );
+vals.push( "bar" );
 
-		// calculate all the inner adjacent multiplications
-		for (i = x | 0;
-			(i | 0) < (y | 0);
-			p = (p + 8) | 0, i = (i + 1) | 0
-		) {
-			// store result
-			arr[ p >> 3 ] = (i * (i + 1)) | 0;
-		}
+keys[0] === x;					// true
+vals[0];						// "foo"
 
-		// calculate average of all intermediate values
-		for (i = 0, p = 0;
-			(i | 0) < (count | 0);
-			p = (p + 8) | 0, i = (i + 1) | 0
-		) {
-			sum = (sum + arr[ p >> 3 ]) | 0;
-		}
-
-		return +(sum / count);
-	}
-
-	return {
-		foo: foo
-	};
-}
-
-var heap = new ArrayBuffer( 0x1000 );
-var foo = fooASM( window, null, heap ).foo;
-
-foo( 10, 20 );		// 233
+keys[1] === y;					// true
+vals[1];						// "bar"
 ```
 
-**Note:** This asm.js example is hand authored for illustration purposes, so it doesn't represent the same code that would be produced from a compilation tool targeting asm.js. But it does show the typical nature of asm.js code, especially the type hinting and use of the `heap` buffer for temporary variable storage.
+Of course, you wouldn't want to manage those parallel arrays yourself, so you could define a data structure with methods that automatically do the management under the covers. Besides having to do that work yourself, the main drawback is that access is no longer O(1) time-complexity, but instead is O(n).
 
-The first call to `fooASM(..)` is what sets up our asm.js module with its `heap` allocation. The result is a `foo(..)` function we can call as many times as necessary. Those `foo(..)` calls should be specially optimized by an asm.js-aware JS engine. Importantly, the preceding code is completely standard JS and would run just fine (without special optimization) in a non-asm.js engine.
+But as of ES6, there's no longer any need to do this! Just use `Map(..)`:
 
-Obviously, the nature of restrictions that make asm.js code so optimizable reduces the possible uses for such code significantly. asm.js won't necessarily be a general optimization set for any given JS program. Instead, it's intended to provide an optimized way of handling specialized tasks such as intensive math operations (e.g., those used in graphics processing for games).
+```js
+var m = new Map();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+m.set( y, "bar" );
+
+m.get( x );						// "foo"
+m.get( y );						// "bar"
+```
+
+The only drawback is that you can't use the `[ ]` bracket access syntax for setting and retrieving values. But `get(..)` and `set(..)` work perfectly suitably instead.
+
+To delete an element from a map, don't use the `delete` operator, but instead use the `delete(..)` method:
+
+```js
+m.set( x, "foo" );
+m.set( y, "bar" );
+
+m.delete( y );
+```
+
+You can clear the entire map's contents with `clear()`. To get the length of a map (i.e., the number of keys), use the `size` property (not `length`):
+
+```js
+m.set( x, "foo" );
+m.set( y, "bar" );
+m.size;							// 2
+
+m.clear();
+m.size;							// 0
+```
+
+The `Map(..)` constructor can also receive an iterable (see "Iterators" in Chapter 3), which must produce a list of arrays, where the first item in each array is the key and the second item is the value. This format for iteration is identical to that produced by the `entries()` method, explained in the next section. That makes it easy to make a copy of a map:
+
+```js
+var m2 = new Map( m.entries() );
+
+// same as:
+var m2 = new Map( m );
+```
+
+Because a map instance is an iterable, and its default iterator is the same as `entries()`, the second shorter form is more preferable.
+
+Of course, you can just manually specify an *entries* list (array of key/value arrays) in the `Map(..)` constructor form:
+
+```js
+var x = { id: 1 },
+	y = { id: 2 };
+
+var m = new Map( [
+	[ x, "foo" ],
+	[ y, "bar" ]
+] );
+
+m.get( x );						// "foo"
+m.get( y );						// "bar"
+```
+
+### Map Values
+
+To get the list of values from a map, use `values(..)`, which returns an iterator. In Chapters 2 and 3, we covered various ways to process an iterator sequentially (like an array), such as the `...` spread operator and the `for..of` loop. Also, "Arrays" in Chapter 6 covers the `Array.from(..)` method in detail. Consider:
+
+```js
+var m = new Map();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+m.set( y, "bar" );
+
+var vals = [ ...m.values() ];
+
+vals;							// ["foo","bar"]
+Array.from( m.values() );		// ["foo","bar"]
+```
+
+As discussed in the previous section, you can iterate over a map's entries using `entries()` (or the default map iterator). Consider:
+
+```js
+var m = new Map();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+m.set( y, "bar" );
+
+var vals = [ ...m.entries() ];
+
+vals[0][0] === x;				// true
+vals[0][1];						// "foo"
+
+vals[1][0] === y;				// true
+vals[1][1];						// "bar"
+```
+
+### Map Keys
+
+To get the list of keys, use `keys()`, which returns an iterator over the keys in the map:
+
+```js
+var m = new Map();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+m.set( y, "bar" );
+
+var keys = [ ...m.keys() ];
+
+keys[0] === x;					// true
+keys[1] === y;					// true
+```
+
+To determine if a map has a given key, use `has(..)`:
+
+```js
+var m = new Map();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+
+m.has( x );						// true
+m.has( y );						// false
+```
+
+Maps essentially let you associate some extra piece of information (the value) with an object (the key) without actually putting that information on the object itself.
+
+While you can use any kind of value as a key for a map, you typically will use objects, as strings and other primitives are already eligible as keys of normal objects. In other words, you'll probably want to continue to use normal objects for maps unless some or all of the keys need to be objects, in which case map is more appropriate.
+
+**Warning:** If you use an object as a map key and that object is later discarded (all references unset) in attempt to have garbage collection (GC) reclaim its memory, the map itself will still retain its entry. You will need to remove the entry from the map for it to be GC-eligible. In the next section, we'll see WeakMaps as a better option for object keys and GC.
+
+## WeakMaps
+
+WeakMaps are a variation on maps, which has most of the same external behavior but differs underneath in how the memory allocation (specifically its GC) works.
+
+WeakMaps take (only) objects as keys. Those objects are held *weakly*, which means if the object itself is GC'd, the entry in the WeakMap is also removed. This isn't observable behavior, though, as the only way an object can be GC'd is if there's no more references to it -- once there are no more references to it, you have no object reference to check if it exists in the WeakMap.
+
+Otherwise, the API for WeakMap is similar, though more limited:
+
+```js
+var m = new WeakMap();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+m.set( x, "foo" );
+
+m.has( x );						// true
+m.has( y );						// false
+```
+
+WeakMaps do not have a `size` property or `clear()` method, nor do they expose any iterators over their keys, values, or entries. So even if you unset the `x` reference, which will remove its entry from `m` upon GC, there is no way to tell. You'll just have to take JavaScript's word for it!
+
+Just like Maps, WeakMaps let you soft-associate information with an object. But they are particularly useful if the object is not one you completely control, such as a DOM element. If the object you're using as a map key can be deleted and should be GC-eligible when it is, then a WeakMap is a more appropriate option.
+
+It's important to note that a WeakMap only holds its *keys* weakly, not its values. Consider:
+
+```js
+var m = new WeakMap();
+
+var x = { id: 1 },
+	y = { id: 2 },
+	z = { id: 3 },
+	w = { id: 4 };
+
+m.set( x, y );
+
+x = null;						// { id: 1 } is GC-eligible
+y = null;						// { id: 2 } is GC-eligible
+								// only because { id: 1 } is
+
+m.set( z, w );
+
+w = null;						// { id: 4 } is not GC-eligible
+```
+
+For this reason, WeakMaps are in my opinion better named "WeakKeyMaps."
+
+## Sets
+
+A set is a collection of unique values (duplicates are ignored).
+
+The API for a set is similar to map. The `add(..)` method takes the place of the `set(..)` method (somewhat ironically), and there is no `get(..)` method.
+
+Consider:
+
+```js
+var s = new Set();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+s.add( x );
+s.add( y );
+s.add( x );
+
+s.size;							// 2
+
+s.delete( y );
+s.size;							// 1
+
+s.clear();
+s.size;							// 0
+```
+
+The `Set(..)` constructor form is similar to `Map(..)`, in that it can receive an iterable, like another set or simply an array of values. However, unlike how `Map(..)` expects *entries* list (array of key/value arrays), `Set(..)` expects a *values* list (array of values):
+
+```js
+var x = { id: 1 },
+	y = { id: 2 };
+
+var s = new Set( [x,y] );
+```
+
+A set doesn't need a `get(..)` because you don't retrieve a value from a set, but rather test if it is present or not, using `has(..)`:
+
+```js
+var s = new Set();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+s.add( x );
+
+s.has( x );						// true
+s.has( y );						// false
+```
+
+**Note:** The comparison algorithm in `has(..)` is almost identical to `Object.is(..)` (see Chapter 6), except that `-0` and `0` are treated as the same rather than distinct.
+
+### Set Iterators
+
+Sets have the same iterator methods as maps. Their behavior is different for sets, but symmetric with the behavior of map iterators. Consider:
+
+```js
+var s = new Set();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+s.add( x ).add( y );
+
+var keys = [ ...s.keys() ],
+	vals = [ ...s.values() ],
+	entries = [ ...s.entries() ];
+
+keys[0] === x;
+keys[1] === y;
+
+vals[0] === x;
+vals[1] === y;
+
+entries[0][0] === x;
+entries[0][1] === x;
+entries[1][0] === y;
+entries[1][1] === y;
+```
+
+The `keys()` and `values()` iterators both yield a list of the unique values in the set. The `entries()` iterator yields a list of entry arrays, where both items of the array are the unique set value. The default iterator for a set is its `values()` iterator.
+
+The inherent uniqueness of a set is its most useful trait. For example:
+
+```js
+var s = new Set( [1,2,3,4,"1",2,4,"5"] ),
+	uniques = [ ...s ];
+
+uniques;						// [1,2,3,4,"1","5"]
+```
+
+Set uniqueness does not allow coercion, so `1` and `"1"` are considered distinct values.
+
+## WeakSets
+
+Whereas a WeakMap holds its keys weakly (but its values strongly), a WeakSet holds its values weakly (there aren't really keys).
+
+```js
+var s = new WeakSet();
+
+var x = { id: 1 },
+	y = { id: 2 };
+
+s.add( x );
+s.add( y );
+
+x = null;						// `x` is GC-eligible
+y = null;						// `y` is GC-eligible
+```
+
+**Warning:** WeakSet values must be objects, not primitive values as is allowed with sets.
 
 ## Review
 
-The first four chapters of this book are based on the premise that async coding patterns give you the ability to write more performant code, which is generally a very important improvement. But async behavior only gets you so far, because it's still fundamentally bound to a single event loop thread.
+ES6 defines a number of useful collections that make working with data in structured ways more efficient and effective.
 
-So in this chapter we've covered several program-level mechanisms for improving performance even further.
+TypedArrays provide "view"s of binary data buffers that align with various integer types, like 8-bit unsigned integers and 32-bit floats. The array access to binary data makes operations much easier to express and maintain, which enables you to more easily work with complex data like video, audio, canvas data, and so on.
 
-Web Workers let you run a JS file (aka program) in a separate thread using async events to message between the threads. They're wonderful for offloading long-running or resource-intensive tasks to a different thread, leaving the main UI thread more responsive.
+Maps are key-value pairs where the key can be an object instead of just a string/primitive. Sets are unique lists of values (of any type).
 
-SIMD proposes to map CPU-level parallel math operations to JavaScript APIs for high-performance data-parallel operations, like number processing on large data sets.
-
-Finally, asm.js describes a small subset of JavaScript that avoids the hard-to-optimize parts of JS (like garbage collection and coercion) and lets the JS engine recognize and run such code through aggressive optimizations. asm.js could be hand authored, but that's extremely tedious and error prone, akin to hand authoring assembly language (hence the name). Instead, the main intent is that asm.js would be a good target for cross-compilation from other highly optimized program languages -- for example, Emscripten (https://github.com/kripken/emscripten/wiki) transpiling C/C++ to JavaScript.
-
-While not covered explicitly in this chapter, there are even more radical ideas under very early discussion for JavaScript, including approximations of direct threaded functionality (not just hidden behind data structure APIs). Whether that happens explicitly, or we just see more parallelism creep into JS behind the scenes, the future of more optimized program-level performance in JS looks really *promising*.
+WeakMaps are maps where the key (object) is weakly held, so that GC is free to collect the entry if it's the last reference to an object. WeakSets are sets where the value is weakly held, again so that GC can remove the entry if it's the last reference to that object.
